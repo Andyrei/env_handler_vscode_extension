@@ -82,9 +82,13 @@ export function activate (context: vscode.ExtensionContext): void {
       const folderPath = await resolveFolder(arg)
       if (folderPath !== undefined) await actions.addToGitignore(folderPath)
     }),
-    vscode.commands.registerCommand('envHandler.addToGitignore', async (arg?: unknown) => {
+    vscode.commands.registerCommand('envHandler.swapActiveEnvironment', async (arg?: unknown) => {
       const folderPath = await resolveFolder(arg)
-      if (folderPath !== undefined) await actions.addToGitignore(folderPath)
+      if (folderPath !== undefined) await actions.swapActiveEnvironment(folderPath)
+    }),
+    vscode.commands.registerCommand('envHandler.restoreSwap', async (arg?: unknown) => {
+      const folderPath = await resolveFolder(arg)
+      if (folderPath !== undefined) await actions.restoreSwap(folderPath)
     }),
     vscode.commands.registerCommand('envHandler.deleteProjectCopies', async (arg?: unknown) => {
       const folderPath = await resolveFolder(arg)

@@ -86,6 +86,17 @@ export class Envh {
     return this.run<{ notIgnored: string[], added: string[] }>(cwd, undefined, ['gitignore', dryRun ? '--dry-run' : '--all'])
   }
 
+  // Runs a command through the Go runner. Returns when the process exits.
+  runCommand (cwd: string, branch: string | undefined, args: string[]): Promise<{ code: number }> {
+    return new Promise<{ code: number }>((resolve, reject) => {
+      const binary = this.binary
+      const fullArgs = ['--cwd', cwd, ...(branch === undefined ? [] : ['--branch', branch]), ...args]
+      const child = require('node:child_process').spawn(binary, fullArgs, { stdio: 'inherit', shell: false })
+      child.on('error', (error: Error) => reject(new EnvhError('FAILED', error.message)))
+      child.on('exit', (code: number | null) => resolve({ code: code ?? 0 }))
+    })
+  }
+
   adopt (cwd: string): Promise<AdoptResult> {
     return this.run<AdoptResult>(cwd, undefined, ['adopt'])
   }

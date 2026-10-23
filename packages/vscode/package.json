@@ -206,6 +206,16 @@
         "icon": "$(run)"
       },
       {
+        "command": "envHandler.swapActiveEnvironment",
+        "title": "Swap .env with Active Environment",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.restoreSwap",
+        "title": "Restore .env from Swap Backup",
+        "category": "Env Handler"
+      },
+      {
         "command": "envHandler.showVersion",
         "title": "Show Version",
         "category": "Env Handler"

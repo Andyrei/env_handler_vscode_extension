@@ -332,13 +332,22 @@ func (p *Project) Snapshot() (jsonapi.Snapshot, error) {
 	if warnings == nil {
 		warnings = []string{}
 	}
-	return jsonapi.Snapshot{
+	snap := jsonapi.Snapshot{
 		Root:         p.Root,
 		Sidecar:      metadata.FileName,
 		Active:       p.Resolved.Active,
 		Environments: envs,
 		Warnings:     warnings,
-	}, nil
+	}
+	sidecar, _ := metadata.Load(p.Root)
+	if sidecar.Swap != nil {
+		snap.Swap = &jsonapi.SwapState{
+			Target: sidecar.Swap.Target,
+			Backup: sidecar.Swap.Backup,
+			Mode:   sidecar.Swap.Mode,
+		}
+	}
+	return snap, nil
 }
 
 // Value returns the first entry for key. The caller decides whether to print it.

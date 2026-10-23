@@ -198,6 +198,43 @@ export class EnvActions {
     }
   }
 
+  // Enables swap mode: .env becomes a symlink/copy of the active env file.
+  async swapActiveEnvironment (folderPath: string): Promise<void> {
+    if (!this.canEdit()) return
+    const state = this.store.stateFor(folderPath)
+    const snapshot = state?.overview?.branches.find(b => b.branch === state.overview?.currentBranch)
+    const active = snapshot?.environments.find(e => e.active)
+    if (active === undefined) {
+      await vscode.window.showWarningMessage('Activate an environment first.')
+      return
+    }
+    const confirm = await vscode.window.showWarningMessage(
+      `Swap will replace .env with ${active.file} (${active.name}) and back up the current .env. Layering is bypassed while swap is active.`,
+      { modal: true },
+      'Swap'
+    )
+    if (confirm !== 'Swap') return
+    try {
+      await this.envh.runCommand(folderPath, undefined, ['swap', '--env', active.file])
+      await this.store.refresh()
+      vscode.window.setStatusBarMessage(`Swapped .env → ${active.file}`, 4000)
+    } catch (error) {
+      await vscode.window.showErrorMessage(errorMessage(error))
+    }
+  }
+
+  // Restores .env from the swap backup.
+  async restoreSwap (folderPath: string): Promise<void> {
+    if (!this.canEdit()) return
+    try {
+      await this.envh.runCommand(folderPath, undefined, ['swap', '--restore', '--force'])
+      await this.store.refresh()
+      vscode.window.setStatusBarMessage('Restored .env from backup', 4000)
+    } catch (error) {
+      await vscode.window.showErrorMessage(errorMessage(error))
+    }
+  }
+
   // Checks if plaintext env files are gitignored and offers to add them.
   async addToGitignore (folderPath: string): Promise<void> {
     if (!this.canEdit()) return

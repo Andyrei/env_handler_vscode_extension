@@ -10,6 +10,7 @@ type Snapshot struct {
 	Branch       string        `json:"branch"`
 	Branches     []string      `json:"branches"`
 	Active       string        `json:"active"`
+	Swap         *SwapState    `json:"swap,omitempty"`
 	Environments []Environment `json:"environments"`
 	Warnings     []string      `json:"warnings"`
 }
@@ -43,6 +44,13 @@ type Variable struct {
 	Line      int    `json:"line"`
 	Encrypted bool   `json:"encrypted"`
 	Multiline bool   `json:"multiline"`
+}
+
+// SwapState describes an active swap in the snapshot.
+type SwapState struct {
+	Target string `json:"target"`
+	Backup string `json:"backup"`
+	Mode   string `json:"mode"`
 }
 
 // Mutation is returned by commands that change state when --json is set.
