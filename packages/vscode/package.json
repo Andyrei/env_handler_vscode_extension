@@ -216,6 +216,11 @@
         "category": "Env Handler"
       },
       {
+        "command": "envHandler.restoreFromTrash",
+        "title": "Restore Env from Trash",
+        "category": "Env Handler"
+      },
+      {
         "command": "envHandler.showVersion",
         "title": "Show Version",
         "category": "Env Handler"

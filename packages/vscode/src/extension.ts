@@ -5,7 +5,7 @@ import * as vscode from 'vscode'
 import { EnvActions } from './actions'
 import { binaryPath, Envh } from './cli'
 import { EnvPanel } from './panel'
-import { EnvStore } from './store'
+import { errorMessage, EnvStore } from './store'
 import { registerDebugProvider } from './debug'
 import { EnvNode, EnvTreeProvider, FolderNode, VariableNode } from './tree'
 import type { Environment } from './types'
@@ -89,6 +89,23 @@ export function activate (context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('envHandler.restoreSwap', async (arg?: unknown) => {
       const folderPath = await resolveFolder(arg)
       if (folderPath !== undefined) await actions.restoreSwap(folderPath)
+    }),
+    vscode.commands.registerCommand('envHandler.restoreFromTrash', async (arg?: unknown) => {
+      const folderPath = await resolveFolder(arg)
+      if (folderPath === undefined) return
+      const files = await vscode.window.showInputBox({ prompt: 'File to restore from trash (e.g. .env.local)' })
+      if (files === undefined || files.trim().length === 0) return
+      try {
+        const result = await spawnSync(binaryPath(context.extensionPath), ['--cwd', folderPath, 'restore', files.trim()], { encoding: 'utf8', shell: false })
+        if (result.status !== 0) {
+          await vscode.window.showErrorMessage(result.stderr.trim() || 'Restore failed')
+          return
+        }
+        await store.refresh()
+        vscode.window.setStatusBarMessage(`Restored ${files.trim()}`, 3000)
+      } catch (error) {
+        await vscode.window.showErrorMessage(errorMessage(error))
+      }
     }),
     vscode.commands.registerCommand('envHandler.deleteProjectCopies', async (arg?: unknown) => {
       const folderPath = await resolveFolder(arg)
