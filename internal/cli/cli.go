@@ -64,6 +64,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		runErr = runWhere(stdout, opts)
 	case "branches":
 		runErr = runBranches(stdout, opts)
+	case "overview":
+		runErr = runOverview(stdout, opts)
 	case "adopt":
 		runErr = runAdopt(stdout, opts)
 	case "purge":
@@ -164,12 +166,33 @@ func openProject(opts options) (*project.Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openLocation(loc)
+}
+
+// openLocation opens one branch and applies the project's active environment.
+// The active environment only shows as active on the branch it belongs to.
+func openLocation(loc store.Location) (*project.Project, error) {
 	p, err := project.Open(loc.Dir)
 	if err != nil {
 		return nil, err
 	}
 	p.Location = loc
+	if active, ok := store.ReadActive(loc); ok {
+		p.Resolved.Active = ""
+		if active.Branch == loc.Branch && hasEnv(p, active.File) {
+			p.Resolved.Active = active.File
+		}
+	}
 	return p, nil
+}
+
+func hasEnv(p *project.Project, file string) bool {
+	for _, env := range p.Resolved.Environments {
+		if env.File == file {
+			return true
+		}
+	}
+	return false
 }
 
 // snapshotFor adds the project and branch context to a snapshot.
@@ -182,7 +205,28 @@ func snapshotFor(p *project.Project) (jsonapi.Snapshot, error) {
 	snap.ProjectPath = p.Location.ProjectPath
 	snap.Branch = p.Location.Branch
 	snap.Branches = store.Branches(p.Location)
+	for i := range snap.Environments {
+		snap.Environments[i].Branch = p.Location.Branch
+	}
 	return snap, nil
+}
+
+// forgetActive clears the project's active pointer when it points at file on this branch.
+func forgetActive(loc store.Location, file string) error {
+	active, ok := store.ReadActive(loc)
+	if !ok || active.Branch != loc.Branch || active.File != file {
+		return nil
+	}
+	return store.WriteActive(loc, store.Active{})
+}
+
+// moveActive follows a file rename when the active pointer referred to the old name.
+func moveActive(loc store.Location, from, to string) error {
+	active, ok := store.ReadActive(loc)
+	if !ok || active.Branch != loc.Branch || active.File != from {
+		return nil
+	}
+	return store.WriteActive(loc, store.Active{Branch: loc.Branch, File: to})
 }
 
 func runWhere(stdout io.Writer, opts options) error {
@@ -217,6 +261,57 @@ func runBranches(stdout io.Writer, opts options) error {
 			marker = "*"
 		}
 		fmt.Fprintf(stdout, "%s %s\n", marker, name)
+	}
+	return nil
+}
+
+// runOverview lists every branch with its environments and the one active environment.
+func runOverview(stdout io.Writer, opts options) error {
+	loc, err := store.Locate(opts.cwd, "")
+	if err != nil {
+		return err
+	}
+	active, _ := store.ReadActive(loc)
+	overview := jsonapi.Overview{
+		Ok:            true,
+		Project:       loc.ProjectID,
+		ProjectPath:   loc.ProjectPath,
+		CurrentBranch: loc.Branch,
+		ActiveBranch:  active.Branch,
+		ActiveFile:    active.File,
+		Branches:      []jsonapi.Snapshot{},
+	}
+	for _, name := range store.Branches(loc) {
+		branchLoc := loc
+		branchLoc.Branch = name
+		branchLoc.Dir = store.BranchDir(loc, name)
+		p, err := openLocation(branchLoc)
+		if err != nil {
+			return err
+		}
+		snap, err := snapshotFor(p)
+		if err != nil {
+			return err
+		}
+		overview.Branches = append(overview.Branches, snap)
+	}
+
+	if opts.json {
+		return writeJSON(stdout, overview)
+	}
+	for _, branch := range overview.Branches {
+		header := branch.Branch
+		if branch.Branch == overview.CurrentBranch {
+			header += " (current)"
+		}
+		fmt.Fprintf(stdout, "%s\n", header)
+		for _, env := range branch.Environments {
+			marker := " "
+			if env.Active {
+				marker = "*"
+			}
+			fmt.Fprintf(stdout, "  %s %-16s %-24s %d vars\n", marker, env.Name, env.File, len(env.Variables))
+		}
 	}
 	return nil
 }
@@ -334,7 +429,7 @@ func runUse(stdout io.Writer, opts options, args []string) error {
 	if err != nil {
 		return err
 	}
-	return report(stdout, opts, p, fmt.Sprintf("Active environment: %s (%s)", env.Name, env.File))
+	return report(stdout, opts, p, fmt.Sprintf("Active environment: %s on %s (%s)", env.Name, p.Location.Branch, env.File))
 }
 
 func runCreate(stdout io.Writer, opts options, args []string) error {
@@ -375,8 +470,15 @@ func runRenameFile(stdout io.Writer, opts options, args []string) error {
 	if err != nil {
 		return err
 	}
+	before, err := p.Find(args[0])
+	if err != nil {
+		return err
+	}
 	env, err := p.RenameFile(args[0], args[1])
 	if err != nil {
+		return err
+	}
+	if err := moveActive(p.Location, before.File, env.File); err != nil {
 		return err
 	}
 	return report(stdout, opts, p, fmt.Sprintf("Renamed file to %s", env.File))
@@ -410,6 +512,9 @@ func runRemove(stdout io.Writer, opts options, args []string) error {
 	}
 	env, err := p.Remove(args[0])
 	if err != nil {
+		return err
+	}
+	if err := forgetActive(p.Location, env.File); err != nil {
 		return err
 	}
 	return report(stdout, opts, p, fmt.Sprintf("Deleted %s (%s)", env.Name, env.File))
@@ -663,13 +768,14 @@ Usage:
 Storage (env files live outside the project, one folder per branch):
   where                          Show where this branch's env files are stored
   branches                       List branches that have env files
+  overview                       List every branch and its environments
   adopt                          Copy .env files from the project into storage (never deletes)
   purge --dry-run | --yes        Delete project copies that are identical to the stored copy
 
 Environments:
   list, snapshot                 Show environments and variable keys (no values)
   create <name> [--activate]     Create .env.<name>
-  use <env>                      Set the active environment
+  use <env>                      Set the active environment (--branch selects another branch)
   rename <env> <name>            Change the display name
   rename-file <env> <file>       Rename the file on disk (.env.<name>)
   duplicate <env> [--name <n>]   Copy an environment to a new file

@@ -1,12 +1,18 @@
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import type { AdoptResult, ImportResult, Mutation, PurgeResult, Snapshot, ValuePayload } from './types'
+import type { AdoptResult, ImportResult, Mutation, Overview, PurgeResult, ValuePayload } from './types'
 
 export class EnvhError extends Error {
   constructor (readonly code: string, message: string) {
     super(message)
   }
+}
+
+// Which project and branch a command targets. Without a branch, the current branch is used.
+export interface Scope {
+  cwd: string
+  branch?: string
 }
 
 export function binaryPath (extensionPath: string): string {
@@ -21,75 +27,77 @@ export function binaryExists (extensionPath: string): boolean {
 export class Envh {
   constructor (private readonly binary: string) {}
 
-  snapshot (cwd: string): Promise<Snapshot> {
-    return this.run<Snapshot>(cwd, ['snapshot'])
+  overview (cwd: string): Promise<Overview> {
+    return this.run<Overview>(cwd, undefined, ['overview'])
   }
 
-  use (cwd: string, env: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['use', env])
+  use (scope: Scope, env: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['use', env])
   }
 
-  create (cwd: string, name: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['create', '--', name])
+  create (scope: Scope, name: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['create', '--', name])
   }
 
-  rename (cwd: string, env: string, name: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['rename', env, '--', name])
+  rename (scope: Scope, env: string, name: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['rename', env, '--', name])
   }
 
-  renameFile (cwd: string, env: string, file: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['rename-file', env, '--', file])
+  renameFile (scope: Scope, env: string, file: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['rename-file', env, '--', file])
   }
 
-  duplicate (cwd: string, env: string, name: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['duplicate', env, '--name', name])
+  duplicate (scope: Scope, env: string, name: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['duplicate', env, '--name', name])
   }
 
-  remove (cwd: string, env: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['remove', env, '--yes'])
+  remove (scope: Scope, env: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['remove', env, '--yes'])
   }
 
-  color (cwd: string, env: string, color: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['color', env, color])
+  color (scope: Scope, env: string, color: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['color', env, color])
   }
 
-  move (cwd: string, env: string, direction: 'up' | 'down'): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['move', env, direction])
+  move (scope: Scope, env: string, direction: 'up' | 'down'): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['move', env, direction])
+  }
+
+  set (scope: Scope, env: string, key: string, value: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['set', env, key, '--', value])
+  }
+
+  unset (scope: Scope, env: string, key: string): Promise<Mutation> {
+    return this.run<Mutation>(scope.cwd, scope.branch, ['unset', env, key])
+  }
+
+  value (scope: Scope, env: string, key: string): Promise<ValuePayload> {
+    return this.run<ValuePayload>(scope.cwd, scope.branch, ['value', env, key, '--reveal'])
+  }
+
+  // Storage commands always act on the current branch.
+  adopt (cwd: string): Promise<AdoptResult> {
+    return this.run<AdoptResult>(cwd, undefined, ['adopt'])
+  }
+
+  // dryRun only lists the project copies that are identical to storage. Nothing is deleted.
+  purge (cwd: string, dryRun: boolean): Promise<PurgeResult> {
+    return this.run<PurgeResult>(cwd, undefined, ['purge', dryRun ? '--dry-run' : '--yes'])
   }
 
   importPostman (cwd: string, file: string, options: { dryRun?: boolean, force?: boolean }): Promise<ImportResult> {
     const args = ['import', 'postman', file]
     if (options.dryRun === true) args.push('--dry-run')
     if (options.force === true) args.push('--force')
-    return this.run<ImportResult>(cwd, args)
+    return this.run<ImportResult>(cwd, undefined, args)
   }
 
-  adopt (cwd: string): Promise<AdoptResult> {
-    return this.run<AdoptResult>(cwd, ['adopt'])
-  }
-
-  // dryRun only lists the project copies that are identical to storage. Nothing is deleted.
-  purge (cwd: string, dryRun: boolean): Promise<PurgeResult> {
-    return this.run<PurgeResult>(cwd, ['purge', dryRun ? '--dry-run' : '--yes'])
-  }
-
-  set (cwd: string, env: string, key: string, value: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['set', env, key, '--', value])
-  }
-
-  unset (cwd: string, env: string, key: string): Promise<Mutation> {
-    return this.run<Mutation>(cwd, ['unset', env, key])
-  }
-
-  value (cwd: string, env: string, key: string): Promise<ValuePayload> {
-    return this.run<ValuePayload>(cwd, ['value', env, key, '--reveal'])
-  }
-
-  private run<T> (cwd: string, args: string[]): Promise<T> {
+  private run<T> (cwd: string, branch: string | undefined, args: string[]): Promise<T> {
+    const branchArgs = branch === undefined ? [] : ['--branch', branch]
     return new Promise<T>((resolve, reject) => {
       execFile(
         this.binary,
-        ['--cwd', cwd, '--json', ...args],
+        ['--cwd', cwd, ...branchArgs, '--json', ...args],
         { encoding: 'utf8', shell: false, maxBuffer: 16 * 1024 * 1024 },
         (error, stdout, stderr) => {
           if (error !== null) {

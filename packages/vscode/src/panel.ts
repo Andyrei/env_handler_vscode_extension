@@ -4,11 +4,18 @@ import type { EnvActions } from './actions'
 import type { EnvStore } from './store'
 import { COLORS, type Environment } from './types'
 
+interface PanelBranch {
+  branch: string
+  current: boolean
+  environments: Environment[]
+}
+
 interface PanelFolder {
   name: string
   path: string
   error?: string
-  environments: Environment[]
+  currentBranch: string
+  branches: PanelBranch[]
 }
 
 // The webview only ever receives keys and metadata. Values never leave the CLI.
@@ -54,18 +61,26 @@ export class EnvPanel {
   }
 
   private post (): void {
-    const folders: PanelFolder[] = this.store.folders().map(state => ({
-      name: state.folder.name,
-      path: state.folder.uri.fsPath,
-      error: state.error,
-      environments: state.snapshot?.environments ?? []
-    }))
+    const folders: PanelFolder[] = this.store.folders().map(state => {
+      const path = state.folder.uri.fsPath
+      return {
+        name: state.folder.name,
+        path,
+        error: state.error,
+        currentBranch: this.store.currentBranch(path) ?? '',
+        branches: this.store.branches(path).map(branch => ({
+          branch: branch.branch,
+          current: branch.branch === this.store.currentBranch(path),
+          environments: branch.environments
+        }))
+      }
+    })
     void this.panel.webview.postMessage({ type: 'state', folders })
   }
 
   private async handle (message: unknown): Promise<void> {
     if (typeof message !== 'object' || message === null) return
-    const { action, folder, file, value } = message as Record<string, unknown>
+    const { action, folder, branch, file, value } = message as Record<string, unknown>
 
     if (action === 'ready') {
       this.post()
@@ -76,9 +91,7 @@ export class EnvPanel {
       return
     }
     if (typeof action !== 'string' || typeof folder !== 'string') return
-
-    const state = this.store.stateFor(folder)
-    if (state === undefined) return
+    if (this.store.stateFor(folder) === undefined) return
 
     if (action === 'create') {
       await this.actions.create(folder)
@@ -89,9 +102,7 @@ export class EnvPanel {
       return
     }
 
-    const env = typeof file === 'string'
-      ? state.snapshot?.environments.find(candidate => candidate.file === file)
-      : undefined
+    const env = this.findEnv(folder, branch, file)
     if (env === undefined) return
 
     switch (action) {
@@ -125,6 +136,14 @@ export class EnvPanel {
         return
     }
   }
+
+  // Look the environment up from the store, so a webview message cannot name arbitrary files.
+  private findEnv (folder: string, branch: unknown, file: unknown): Environment | undefined {
+    if (typeof branch !== 'string' || typeof file !== 'string') return undefined
+    return this.store.branches(folder)
+      .find(item => item.branch === branch)
+      ?.environments.find(env => env.file === file)
+  }
 }
 
 function renderHtml (cspSource: string, nonce: string): string {
@@ -144,6 +163,10 @@ function renderHtml (cspSource: string, nonce: string): string {
   button:hover { background: var(--vscode-button-hoverBackground); }
   button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
   select { background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border); padding: 2px; }
+  details { margin: 12px 0; border: 1px solid var(--vscode-panel-border); border-radius: 4px; }
+  summary { cursor: pointer; padding: 8px 10px; font-weight: 600; }
+  .badge { font-weight: 400; color: var(--vscode-descriptionForeground); margin-left: 8px; }
+  .body { padding: 0 10px 10px 10px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); vertical-align: middle; }
   th { color: var(--vscode-descriptionForeground); font-weight: 500; }
@@ -164,12 +187,7 @@ function renderHtml (cspSource: string, nonce: string): string {
   <button id="refresh" class="secondary">Refresh</button>
 </header>
 <p id="message"></p>
-<table>
-  <thead>
-    <tr><th>Status</th><th>Name</th><th>File</th><th>Keys</th><th>Color</th><th>Actions</th></tr>
-  </thead>
-  <tbody id="rows"></tbody>
-</table>
+<div id="groups"></div>
 <script nonce="${nonce}">
 (function () {
   const vscode = acquireVsCodeApi();
@@ -178,7 +196,7 @@ function renderHtml (cspSource: string, nonce: string): string {
   let selected = 0;
 
   const folderSelect = document.getElementById('folder');
-  const rows = document.getElementById('rows');
+  const groups = document.getElementById('groups');
   const message = document.getElementById('message');
 
   document.getElementById('create').addEventListener('click', function () { send('create'); });
@@ -218,7 +236,7 @@ function renderHtml (cspSource: string, nonce: string): string {
     const b = document.createElement('button');
     b.textContent = label;
     if (extraClass) b.className = extraClass;
-    b.addEventListener('click', function () { send(action, { file: env.file }); });
+    b.addEventListener('click', function () { send(action, { branch: env.branch, file: env.file }); });
     return b;
   }
 
@@ -242,7 +260,9 @@ function renderHtml (cspSource: string, nonce: string): string {
       option.selected = c === env.color;
       select.appendChild(option);
     });
-    select.addEventListener('change', function () { send('color', { file: env.file, value: select.value }); });
+    select.addEventListener('change', function () {
+      send('color', { branch: env.branch, file: env.file, value: select.value });
+    });
     colorTd.appendChild(select);
     tr.appendChild(colorTd);
 
@@ -261,6 +281,47 @@ function renderHtml (cspSource: string, nonce: string): string {
     return tr;
   }
 
+  function branchSection (branch) {
+    const details = document.createElement('details');
+    details.open = branch.current;
+    const summary = document.createElement('summary');
+    summary.textContent = branch.branch;
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = branch.current
+      ? 'current branch'
+      : branch.environments.length + (branch.environments.length === 1 ? ' env' : ' envs');
+    summary.appendChild(badge);
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'body';
+    if (branch.environments.length === 0) {
+      const empty = document.createElement('p');
+      empty.textContent = 'No environments on this branch.';
+      body.appendChild(empty);
+    } else {
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      ['Status', 'Name', 'File', 'Keys', 'Color', 'Actions'].forEach(function (label) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      branch.environments.forEach(function (env, index) {
+        tbody.appendChild(row(env, index, branch.environments.length));
+      });
+      table.appendChild(tbody);
+      body.appendChild(table);
+    }
+    details.appendChild(body);
+    return details;
+  }
+
   function render () {
     folderSelect.textContent = '';
     folders.forEach(function (folder, index) {
@@ -272,7 +333,7 @@ function renderHtml (cspSource: string, nonce: string): string {
     });
     folderSelect.hidden = folders.length < 2;
 
-    rows.textContent = '';
+    groups.textContent = '';
     const folder = folders[selected];
     if (!folder) {
       message.textContent = 'Open a folder to manage its environments.';
@@ -282,13 +343,12 @@ function renderHtml (cspSource: string, nonce: string): string {
       message.textContent = folder.error;
       return;
     }
-    if (folder.environments.length === 0) {
+    message.textContent = 'Branch: ' + folder.currentBranch + '. Other branches are listed below; any env can be activated.';
+    if (folder.branches.every(function (b) { return b.environments.length === 0; })) {
       message.textContent = 'No environments yet. Create one, or import a Postman environment.';
-      return;
     }
-    message.textContent = '';
-    folder.environments.forEach(function (env, index) {
-      rows.appendChild(row(env, index, folder.environments.length));
+    folder.branches.forEach(function (branch) {
+      groups.appendChild(branchSection(branch));
     });
   }
 

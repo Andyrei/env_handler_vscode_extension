@@ -1,6 +1,6 @@
 import * as path from 'node:path'
 import * as vscode from 'vscode'
-import type { Envh } from './cli'
+import type { Envh, Scope } from './cli'
 import { EnvhError } from './cli'
 import type { EnvStore } from './store'
 import { errorMessage } from './store'
@@ -10,19 +10,20 @@ const KEY_PATTERN = /^[^\s=#:]+$/
 const FILE_PATTERN = /^\.env(\.[A-Za-z0-9_-]+)+$/
 
 // Every environment and variable change goes through here, and through the Go CLI.
+// Each change targets the branch the environment belongs to.
 export class EnvActions {
   constructor (private readonly envh: Envh, private readonly store: EnvStore) {}
 
   async create (folderPath: string): Promise<void> {
     const name = await this.prompt({ prompt: 'Environment name', placeHolder: 'For example Local, Staging, Production' }, true)
     if (name === undefined) return
-    await this.run(folderPath, undefined, () => this.envh.create(folderPath, name), `Created ${name}`)
+    await this.run(folderPath, undefined, () => this.envh.create({ cwd: folderPath }, name), `Created ${name}`)
   }
 
   async rename (folderPath: string, env: Environment): Promise<void> {
     const name = await this.prompt({ prompt: 'New display name', value: env.name }, true)
     if (name === undefined || name === env.name) return
-    await this.run(folderPath, undefined, () => this.envh.rename(folderPath, env.file, name), `Renamed to ${name}`)
+    await this.run(folderPath, env, () => this.envh.rename(scopeOf(folderPath, env), env.file, name), `Renamed to ${name}`)
   }
 
   async renameFile (folderPath: string, env: Environment): Promise<void> {
@@ -32,18 +33,18 @@ export class EnvActions {
       validateInput: value => (FILE_PATTERN.test(value.trim()) ? undefined : 'Use a name like .env.staging')
     }, true)
     if (file === undefined || file === env.file) return
-    await this.run(folderPath, env.file, () => this.envh.renameFile(folderPath, env.file, file), `Renamed file to ${file}`)
+    await this.run(folderPath, env, () => this.envh.renameFile(scopeOf(folderPath, env), env.file, file), `Renamed file to ${file}`)
   }
 
   async duplicate (folderPath: string, env: Environment): Promise<void> {
     const name = await this.prompt({ prompt: 'Name for the copy', value: `${env.name} Copy` }, true)
     if (name === undefined) return
-    await this.run(folderPath, undefined, () => this.envh.duplicate(folderPath, env.file, name), `Duplicated as ${name}`)
+    await this.run(folderPath, env, () => this.envh.duplicate(scopeOf(folderPath, env), env.file, name), `Duplicated as ${name}`)
   }
 
   async activate (folderPath: string, env: Environment): Promise<void> {
     if (env.active) return
-    await this.run(folderPath, undefined, () => this.envh.use(folderPath, env.file), `Active: ${env.name}`)
+    await this.run(folderPath, env, () => this.envh.use(scopeOf(folderPath, env), env.file), `Active: ${env.name} on ${env.branch}`)
   }
 
   async pickColor (folderPath: string, env: Environment): Promise<void> {
@@ -57,22 +58,22 @@ export class EnvActions {
 
   async setColor (folderPath: string, env: Environment, color: string): Promise<void> {
     if (color === env.color) return
-    await this.run(folderPath, undefined, () => this.envh.color(folderPath, env.file, color), `${env.name} is now ${color}`)
+    await this.run(folderPath, env, () => this.envh.color(scopeOf(folderPath, env), env.file, color), `${env.name} is now ${color}`)
   }
 
   async move (folderPath: string, env: Environment, direction: 'up' | 'down'): Promise<void> {
-    await this.run(folderPath, undefined, () => this.envh.move(folderPath, env.file, direction), `Moved ${env.name} ${direction}`)
+    await this.run(folderPath, env, () => this.envh.move(scopeOf(folderPath, env), env.file, direction), `Moved ${env.name} ${direction}`)
   }
 
   async remove (folderPath: string, env: Environment): Promise<void> {
     if (!this.canEdit()) return
     const choice = await vscode.window.showWarningMessage(
-      `Delete ${env.file} (${env.name})? The file is removed from disk.`,
+      `Delete ${env.file} (${env.name}) on ${env.branch}? The file is removed from local storage.`,
       { modal: true },
       'Delete'
     )
     if (choice !== 'Delete') return
-    await this.run(folderPath, env.file, () => this.envh.remove(folderPath, env.file), `Deleted ${env.name}`)
+    await this.run(folderPath, env, () => this.envh.remove(scopeOf(folderPath, env), env.file), `Deleted ${env.name}`)
   }
 
   async addVariable (folderPath: string, env: Environment): Promise<void> {
@@ -92,7 +93,7 @@ export class EnvActions {
     }
     const value = await vscode.window.showInputBox({ prompt: `Value for ${key}`, ignoreFocusOut: true })
     if (value === undefined) return
-    await this.run(folderPath, env.file, () => this.envh.set(folderPath, env.file, key, value), `Set ${key}`)
+    await this.run(folderPath, env, () => this.envh.set(scopeOf(folderPath, env), env.file, key, value), `Set ${key}`)
   }
 
   async editVariable (folderPath: string, env: Environment, key: string, encrypted: boolean): Promise<void> {
@@ -102,14 +103,14 @@ export class EnvActions {
     }
     let current: string
     try {
-      current = (await this.envh.value(folderPath, env.file, key)).value
+      current = (await this.envh.value(scopeOf(folderPath, env), env.file, key)).value
     } catch (error) {
       await vscode.window.showErrorMessage(errorMessage(error))
       return
     }
     const value = await vscode.window.showInputBox({ prompt: `New value for ${key}`, value: current, ignoreFocusOut: true })
     if (value === undefined || value === current) return
-    await this.run(folderPath, env.file, () => this.envh.set(folderPath, env.file, key, value), `Updated ${key}`)
+    await this.run(folderPath, env, () => this.envh.set(scopeOf(folderPath, env), env.file, key, value), `Updated ${key}`)
   }
 
   async deleteVariable (folderPath: string, env: Environment, key: string, encrypted: boolean): Promise<void> {
@@ -119,7 +120,7 @@ export class EnvActions {
     }
     const choice = await vscode.window.showWarningMessage(`Delete ${key} from ${env.name}?`, { modal: true }, 'Delete')
     if (choice !== 'Delete') return
-    await this.run(folderPath, env.file, () => this.envh.unset(folderPath, env.file, key), `Deleted ${key}`)
+    await this.run(folderPath, env, () => this.envh.unset(scopeOf(folderPath, env), env.file, key), `Deleted ${key}`)
   }
 
   async copyValue (folderPath: string, env: Environment, key: string, encrypted: boolean): Promise<void> {
@@ -128,7 +129,7 @@ export class EnvActions {
       return
     }
     try {
-      const payload = await this.envh.value(folderPath, env.file, key)
+      const payload = await this.envh.value(scopeOf(folderPath, env), env.file, key)
       await vscode.env.clipboard.writeText(payload.value)
       vscode.window.setStatusBarMessage(`Copied ${key}`, 2000)
     } catch (error) {
@@ -161,7 +162,7 @@ export class EnvActions {
     let force = false
     if (preview.conflicts.length > 0) {
       const choice = await vscode.window.showWarningMessage(
-        `${preview.conflicts.join(', ')} already exist. Overwrite them?`,
+        `${preview.conflicts.join(', ')} already exist on this branch. Overwrite them?`,
         { modal: true },
         'Overwrite',
         'Import new only'
@@ -177,7 +178,7 @@ export class EnvActions {
     const toWrite = force ? [...preview.imported] : preview.imported
     if (toWrite.length === 0) return
     const confirm = await vscode.window.showInformationMessage(
-      `Import ${toWrite.join(', ')}? Values are stored as plaintext in these files.`,
+      `Import ${toWrite.join(', ')} on this branch? Values are stored as plaintext in these files.`,
       { modal: true },
       'Import'
     )
@@ -197,7 +198,7 @@ export class EnvActions {
     }
   }
 
-  // Copies the project's env files into local storage. It never deletes anything.
+  // Copies the current branch's project env files into local storage. It never deletes anything.
   async adoptProjectFiles (folderPath: string): Promise<void> {
     if (!this.canEdit()) return
     let result: AdoptResult
@@ -222,7 +223,7 @@ export class EnvActions {
     vscode.window.setStatusBarMessage(notes.join(' '), 6000)
   }
 
-  // Deletes project copies only when the stored copy is identical. Shows the list first; Cancel is the default.
+  // Deletes project copies only when the stored copy is identical. Cancel is the first item.
   async deleteProjectCopies (folderPath: string): Promise<void> {
     if (!this.canEdit()) return
     let preview: PurgeResult
@@ -236,7 +237,6 @@ export class EnvActions {
       await vscode.window.showInformationMessage('No project env files match a stored copy, so nothing can be deleted safely.')
       return
     }
-    // Cancel is the first item, so pressing Enter cancels.
     const picked = await vscode.window.showQuickPick(
       [
         { label: 'Cancel' },
@@ -260,13 +260,13 @@ export class EnvActions {
   // Shared path for every mutation: trust check, unsaved-edit check, CLI call, refresh.
   private async run (
     folderPath: string,
-    file: string | undefined,
+    env: Environment | undefined,
     task: () => Promise<Mutation>,
     done: string
   ): Promise<void> {
     if (!this.canEdit()) return
-    if (file !== undefined && this.isDirty(this.store.rootFor(folderPath), file)) {
-      await vscode.window.showWarningMessage(`Save ${file} before changing it from Env Handler.`)
+    if (env !== undefined && this.isDirty(this.store.rootFor(folderPath, env.branch), env.file)) {
+      await vscode.window.showWarningMessage(`Save ${env.file} before changing it from Env Handler.`)
       return
     }
     try {
@@ -307,4 +307,9 @@ export class EnvActions {
       document => document.isDirty && document.uri.scheme === 'file' && document.uri.fsPath === target
     )
   }
+}
+
+// Commands run in the project folder, against the branch the environment belongs to.
+function scopeOf (folderPath: string, env: Environment): Scope {
+  return { cwd: folderPath, branch: env.branch }
 }

@@ -99,7 +99,10 @@ Then run **Developer: Reload Window**.
 
 ## CLI JSON contract
 
-- `envh snapshot --json`: metadata, environments, layers, variable keys, encrypted flags, line numbers. **No values.**
+- `envh snapshot --json`: one branch's metadata, environments, layers, variable keys, encrypted flags, line numbers. **No values.** Each environment has a `branch` field.
+- `envh overview --json`: every branch of the project, plus the single active environment (`activeBranch`, `activeFile`). The extension uses this for the panel and tree.
+- Commands act on the current branch unless `--branch <name>` is given. The extension always passes the branch an environment belongs to.
+- The active environment is stored once per project in `project.json` (`active.branch`, `active.file`); it can belong to any branch.
 - `envh value <env> <key> --reveal --json`: explicit single value reveal.
 - `envh resolve --env <env> --json --skip-encrypted`: merged values for debug/run.
 - Mutations (`use`, `create`, `set`, `unset`) return `{ "ok": true, "snapshot": { ... } }` when `--json`.

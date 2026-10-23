@@ -1,6 +1,6 @@
 package jsonapi
 
-// Snapshot is the project state the extension renders. It never contains values.
+// Snapshot is the state of one branch. It never contains values.
 // Root is the folder that holds this branch's env files (outside the project).
 type Snapshot struct {
 	Root         string        `json:"root"`
@@ -14,12 +14,24 @@ type Snapshot struct {
 	Warnings     []string      `json:"warnings"`
 }
 
+// Overview lists every branch of a project, with the one active environment.
+type Overview struct {
+	Ok            bool       `json:"ok"`
+	Project       string     `json:"project"`
+	ProjectPath   string     `json:"projectPath"`
+	CurrentBranch string     `json:"currentBranch"`
+	ActiveBranch  string     `json:"activeBranch"`
+	ActiveFile    string     `json:"activeFile"`
+	Branches      []Snapshot `json:"branches"`
+}
+
 // Environment describes one env file.
 type Environment struct {
 	File      string     `json:"file"`
 	Name      string     `json:"name"`
 	Color     string     `json:"color"`
 	Order     int        `json:"order"`
+	Branch    string     `json:"branch"`
 	Active    bool       `json:"active"`
 	Layers    []string   `json:"layers"`
 	Variables []Variable `json:"variables"`

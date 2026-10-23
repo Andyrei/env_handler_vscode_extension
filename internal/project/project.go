@@ -107,7 +107,15 @@ func (p *Project) Use(selector string) (metadata.Environment, error) {
 		return metadata.Environment{}, err
 	}
 	p.Resolved.Active = env.File
-	return env, p.save()
+	if err := p.save(); err != nil {
+		return metadata.Environment{}, err
+	}
+	if p.Location.ProjectDir != "" {
+		if err := store.WriteActive(p.Location, store.Active{Branch: p.Location.Branch, File: env.File}); err != nil {
+			return metadata.Environment{}, err
+		}
+	}
+	return env, nil
 }
 
 // Create writes an empty .env.<slug> file and records it.
@@ -424,7 +432,9 @@ func (p *Project) writeNew(file, name string, data []byte, mode os.FileMode, ove
 	if err != nil {
 		return metadata.Environment{}, err
 	}
+	location := p.Location
 	*p = *reopened
+	p.Location = location
 	p.update(file, func(e *metadata.Environment) { e.Name = name })
 	if err := p.save(); err != nil {
 		return metadata.Environment{}, err

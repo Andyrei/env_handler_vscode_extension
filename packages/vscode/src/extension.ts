@@ -33,14 +33,16 @@ export function activate (context: vscode.ExtensionContext): void {
 
   const updateStatus = (): void => {
     const folder = activeFolderPath() ?? store.folders()[0]?.folder.uri.fsPath
-    const state = folder === undefined ? undefined : store.stateFor(folder)
-    if (state?.snapshot === undefined) {
+    if (folder === undefined || store.stateFor(folder)?.overview === undefined) {
       statusItem.hide()
       return
     }
-    const active = state.snapshot.environments.find(env => env.active)
-    statusItem.text = `$(symbol-variable) ${active?.name ?? 'No environment'} · $(git-branch) ${state.snapshot.branch}`
-    statusItem.tooltip = `Active environment on branch ${state.snapshot.branch}. Click to switch.`
+    const active = store.activeEnvironment(folder)
+    const current = store.currentBranch(folder) ?? ''
+    statusItem.text = active === undefined
+      ? `$(symbol-variable) No environment · $(git-branch) ${current}`
+      : `$(symbol-variable) ${active.name} (${active.branch}) · $(git-branch) ${current}`
+    statusItem.tooltip = 'Active environment for this project. Click to switch.'
     statusItem.show()
   }
 
@@ -116,7 +118,7 @@ export function activate (context: vscode.ExtensionContext): void {
       actions.copyValue(folder, env, variable.key, variable.encrypted)
     )),
     vscode.commands.registerCommand('envHandler.openFile', (arg?: unknown) => withEnv(arg, async (folder, env) => {
-      const root = store.rootFor(folder)
+      const root = store.rootFor(folder, env.branch)
       await vscode.window.showTextDocument(vscode.Uri.file(path.join(root, ...env.file.split('/'))))
     }))
   )
@@ -153,14 +155,17 @@ async function withVariable (
 async function switchEnvironment (store: EnvStore, actions: EnvActions): Promise<void> {
   const picks: EnvPick[] = []
   for (const state of store.folders()) {
-    for (const env of state.snapshot?.environments ?? []) {
-      picks.push({
-        label: env.name,
-        description: env.file,
-        detail: store.folders().length > 1 ? state.folder.name : undefined,
-        folderPath: state.folder.uri.fsPath,
-        env
-      })
+    const folderPath = state.folder.uri.fsPath
+    for (const branch of store.branches(folderPath)) {
+      for (const env of branch.environments) {
+        picks.push({
+          label: env.name,
+          description: `${env.branch} · ${env.file}`,
+          detail: store.folders().length > 1 ? state.folder.name : undefined,
+          folderPath,
+          env
+        })
+      }
     }
   }
   if (picks.length === 0) {

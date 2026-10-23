@@ -10,13 +10,14 @@ export interface Environment {
   name: string
   color: string
   order: number
+  branch: string
   active: boolean
   layers: string[]
   variables: Variable[]
 }
 
+// One branch of the project. Root is that branch's env folder, outside the project.
 export interface Snapshot {
-  // Folder holding this branch's env files. It lives outside the project.
   root: string
   sidecar: string
   project: string
@@ -26,6 +27,16 @@ export interface Snapshot {
   active: string
   environments: Environment[]
   warnings: string[]
+}
+
+export interface Overview {
+  ok: boolean
+  project: string
+  projectPath: string
+  currentBranch: string
+  activeBranch: string
+  activeFile: string
+  branches: Snapshot[]
 }
 
 export interface Mutation {

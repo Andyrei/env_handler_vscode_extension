@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
-import type { EnvStore, FolderState } from './store'
-import type { Environment, Variable } from './types'
+import type { EnvStore } from './store'
+import type { Environment, Snapshot, Variable } from './types'
 
 export class FolderNode extends vscode.TreeItem {
   readonly folderPath: string
@@ -14,6 +14,17 @@ export class FolderNode extends vscode.TreeItem {
   }
 }
 
+// A branch that is not checked out. Its envs can still be used when activated.
+export class BranchNode extends vscode.TreeItem {
+  constructor (readonly folderPath: string, readonly snapshot: Snapshot) {
+    super(snapshot.branch, vscode.TreeItemCollapsibleState.Collapsed)
+    this.id = `${folderPath}::branch::${snapshot.branch}`
+    this.description = `${snapshot.environments.length} env(s)`
+    this.contextValue = 'branch'
+    this.iconPath = new vscode.ThemeIcon('git-branch')
+  }
+}
+
 export class EnvNode extends vscode.TreeItem {
   constructor (readonly folderPath: string, readonly env: Environment) {
     super(
@@ -23,9 +34,9 @@ export class EnvNode extends vscode.TreeItem {
         : vscode.TreeItemCollapsibleState.None
     )
     const encrypted = env.variables.filter(variable => variable.encrypted).length
-    this.id = `${folderPath}::${env.file}`
+    this.id = `${folderPath}::${env.branch}::${env.file}`
     this.description = describe(env, encrypted)
-    this.tooltip = `${env.file}\nLoads: ${env.layers.join(' → ')}`
+    this.tooltip = `${env.file} on ${env.branch}\nLoads: ${env.layers.join(' → ')}`
     this.contextValue = env.active ? 'env.active' : 'env'
     this.iconPath = new vscode.ThemeIcon(
       env.active ? 'circle-filled' : 'circle-outline',
@@ -38,7 +49,7 @@ export class EnvNode extends vscode.TreeItem {
 export class VariableNode extends vscode.TreeItem {
   constructor (readonly folderPath: string, readonly env: Environment, readonly variable: Variable) {
     super(variable.key, vscode.TreeItemCollapsibleState.None)
-    this.id = `${folderPath}::${env.file}::${variable.key}::${variable.line}`
+    this.id = `${folderPath}::${env.branch}::${env.file}::${variable.key}::${variable.line}`
     this.description = variable.encrypted ? 'encrypted · read-only' : `line ${variable.line}`
     this.tooltip = variable.encrypted
       ? `${variable.key} is encrypted and read-only`
@@ -56,7 +67,7 @@ export class MessageNode extends vscode.TreeItem {
   }
 }
 
-export type TreeNode = FolderNode | EnvNode | VariableNode | MessageNode
+export type TreeNode = FolderNode | BranchNode | EnvNode | VariableNode | MessageNode
 
 export class EnvTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly changed = new vscode.EventEmitter<TreeNode | undefined>()
@@ -74,7 +85,10 @@ export class EnvTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   getChildren (node?: TreeNode): TreeNode[] {
     if (node instanceof FolderNode) {
-      return this.environmentNodes(this.store.stateFor(node.folderPath))
+      return this.folderNodes(node.folderPath)
+    }
+    if (node instanceof BranchNode) {
+      return node.snapshot.environments.map(env => new EnvNode(node.folderPath, env))
     }
     if (node instanceof EnvNode) {
       return node.env.variables.map(variable => new VariableNode(node.folderPath, node.env, variable))
@@ -85,27 +99,34 @@ export class EnvTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
     const folders = this.store.folders()
     if (folders.length > 1) {
-      return folders.map(state => new FolderNode(state.folder, state.snapshot?.branch))
+      return folders.map(state => new FolderNode(state.folder, this.store.currentBranch(state.folder.uri.fsPath)))
     }
-    return this.environmentNodes(folders[0])
+    return folders[0] === undefined ? [] : this.folderNodes(folders[0].folder.uri.fsPath)
   }
 
-  private environmentNodes (state: FolderState | undefined): TreeNode[] {
-    if (state === undefined) {
-      return []
-    }
+  // Current branch envs first, then one collapsed group for every other branch.
+  private folderNodes (folderPath: string): TreeNode[] {
+    const state = this.store.stateFor(folderPath)
+    if (state === undefined) return []
     if (state.error !== undefined) {
       return [new MessageNode(`Could not read environments: ${state.error}`)]
     }
-    const envs = state.snapshot?.environments ?? []
-    if (envs.length === 0) {
+    const branches = this.store.branches(folderPath)
+    const current = this.store.currentSnapshot(folderPath)
+    if (current === undefined || (current.environments.length === 0 && branches.length <= 1)) {
       return [new MessageNode('No .env files yet. Create an environment.', {
         command: 'envHandler.createEnvironment',
         title: 'Create Environment'
       })]
     }
-    const folderPath = state.folder.uri.fsPath
-    return envs.map(env => new EnvNode(folderPath, env))
+
+    const nodes: TreeNode[] = current.environments.map(env => new EnvNode(folderPath, env))
+    for (const branch of branches) {
+      if (branch.branch !== current.branch && branch.environments.length > 0) {
+        nodes.push(new BranchNode(folderPath, branch))
+      }
+    }
+    return nodes
   }
 }
 

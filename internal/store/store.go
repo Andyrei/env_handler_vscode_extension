@@ -28,6 +28,12 @@ type Location struct {
 	Dir         string `json:"dir"`
 }
 
+// Active is the one environment the project uses. It can belong to any branch.
+type Active struct {
+	Branch string `json:"branch"`
+	File   string `json:"file"`
+}
+
 // AdoptReport lists what Adopt did with files found in the project folder.
 // Adopt only copies. It never deletes anything.
 type AdoptReport struct {
@@ -56,6 +62,11 @@ func Home() (string, error) {
 		return "", err
 	}
 	return filepath.Join(config, "env-handler"), nil
+}
+
+// BranchDir returns the env folder for a branch of the same project.
+func BranchDir(loc Location, branch string) string {
+	return filepath.Join(loc.ProjectDir, "branches", url.PathEscape(branch))
 }
 
 // Locate finds the env folder for repo and its current branch, creating it if needed.
@@ -87,13 +98,12 @@ func Locate(repo, branchOverride string) (Location, error) {
 		return Location{}, err
 	}
 	projectDir := filepath.Join(home, "projects", id)
-	dir := filepath.Join(projectDir, "branches", url.PathEscape(branch))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	loc := Location{ProjectID: id, ProjectPath: root, ProjectDir: projectDir, Branch: branch}
+	loc.Dir = BranchDir(loc, branch)
+	if err := os.MkdirAll(loc.Dir, 0o700); err != nil {
 		return Location{}, err
 	}
-
-	loc := Location{ProjectID: id, ProjectPath: root, ProjectDir: projectDir, Branch: branch, Dir: dir}
-	if err := writeProjectInfo(loc); err != nil {
+	if err := writeProjectInfo(loc, nil); err != nil {
 		return Location{}, err
 	}
 	return loc, nil
@@ -118,6 +128,38 @@ func Branches(loc Location) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ReadActive returns the project's active environment, if one is set.
+func ReadActive(loc Location) (Active, bool) {
+	info, err := readProjectInfo(loc)
+	if err != nil {
+		return Active{}, false
+	}
+	raw, ok := info["active"].(map[string]any)
+	if !ok {
+		return Active{}, false
+	}
+	branch, _ := raw["branch"].(string)
+	file, _ := raw["file"].(string)
+	if file == "" {
+		return Active{}, false
+	}
+	return Active{Branch: branch, File: file}, true
+}
+
+// WriteActive records the project's active environment. An empty File clears it.
+func WriteActive(loc Location, active Active) error {
+	info, err := readProjectInfo(loc)
+	if err != nil {
+		return err
+	}
+	if active.File == "" {
+		delete(info, "active")
+	} else {
+		info["active"] = map[string]string{"branch": active.Branch, "file": active.File}
+	}
+	return writeProjectInfo(loc, info)
 }
 
 // Adopt copies env files found in the project folder into the branch folder.
@@ -199,19 +241,40 @@ func Purge(loc Location, dryRun bool) (PurgeReport, error) {
 	return report, nil
 }
 
-func writeProjectInfo(loc Location) error {
-	path := filepath.Join(loc.ProjectDir, "project.json")
-	if _, err := os.Stat(path); err == nil {
-		return nil
+// readProjectInfo returns the project.json document, creating the defaults when it is missing.
+func readProjectInfo(loc Location) (map[string]any, error) {
+	info := map[string]any{}
+	data, err := os.ReadFile(filepath.Join(loc.ProjectDir, "project.json"))
+	if err == nil {
+		if err := json.Unmarshal(data, &info); err != nil {
+			info = map[string]any{}
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
-	data, err := json.MarshalIndent(map[string]string{
-		"name": filepath.Base(loc.ProjectPath),
-		"path": loc.ProjectPath,
-	}, "", "  ")
+	if _, ok := info["name"]; !ok {
+		info["name"] = filepath.Base(loc.ProjectPath)
+	}
+	if _, ok := info["path"]; !ok {
+		info["path"] = loc.ProjectPath
+	}
+	return info, nil
+}
+
+// writeProjectInfo writes project.json. Passing nil keeps existing data and fills the defaults.
+func writeProjectInfo(loc Location, info map[string]any) error {
+	if info == nil {
+		var err error
+		info, err = readProjectInfo(loc)
+		if err != nil {
+			return err
+		}
+	}
+	data, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
 		return err
 	}
-	return fsx.WriteFileAtomic(path, append(data, '\n'), 0o600)
+	return fsx.WriteFileAtomic(filepath.Join(loc.ProjectDir, "project.json"), append(data, '\n'), 0o600)
 }
 
 func currentBranch(root string) string {
