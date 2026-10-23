@@ -102,13 +102,17 @@ Then run **Developer: Reload Window**.
 - `envh snapshot --json`: metadata, environments, layers, variable keys, encrypted flags, line numbers. **No values.**
 - `envh value <env> <key> --reveal --json`: explicit single value reveal.
 - `envh resolve --env <env> --json --skip-encrypted`: merged values for debug/run.
-- Mutations return `{ "ok": true, ... }` and a refreshed snapshot when `--json`.
+- Mutations (`use`, `create`, `set`, `unset`) return `{ "ok": true, "snapshot": { ... } }` when `--json`.
+- Put `--` before values that may start with a dash (the extension always does: `set <env> <key> -- <value>`).
 - Errors return `{ "ok": false, "code": "...", "message": "..." }` on stderr; no values.
 - DTO changes require updating both Go structs and TypeScript types.
 
 ## Data and layering
 
-- Sidecar: `<project-root>/.envh.json`.
+- Env files and the sidecar are NOT in the project. They live in the local store: `<config dir>/env-handler/projects/<project-id>/branches/<escaped branch>/` (`ENVH_HOME` overrides the root; tests use it). The sidecar is `.envh.json` in that branch folder.
+- The branch comes from git (`--branch` overrides it). Detached HEAD uses `detached-<sha>`; no git uses `default`.
+- Snapshot `root` is the store folder; the extension must use it for file paths, not the workspace folder.
+- Tests must never write to the real store: `internal/cli/main_test.go` sets `ENVH_HOME` to a temp folder.
 - Discovery: `**/.env`, `**/.env.*`; exclude examples, templates, `.env.keys*`, `.env.vault`, `.envh.json`, `node_modules`, `.git`.
 - Base layer: `.env` in the same directory as the active file; active loads after it.
 - Swap loads only the swap target and bypasses layering.

@@ -1,31 +1,656 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 
+	"env-handler/internal/envfile"
+	"env-handler/internal/jsonapi"
+	"env-handler/internal/metadata"
+	"env-handler/internal/postman"
+	"env-handler/internal/project"
+	"env-handler/internal/store"
 	"env-handler/internal/version"
 )
 
+var errUsage = errors.New("usage error")
+
+type options struct {
+	cwd          string
+	branch       string
+	name         string
+	json         bool
+	reveal       bool
+	activate     bool
+	quiet        bool
+	yes          bool
+	force        bool
+	dryRun       bool
+	skipDisabled bool
+	help         bool
+	version      bool
+	positional   []string
+}
+
 // Run executes the CLI and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
+	opts, err := parse(args)
+	if err != nil {
+		return fail(stderr, opts.json, usageErr(err.Error()))
+	}
+	if opts.version {
+		fmt.Fprintln(stdout, version.Version)
+		return 0
+	}
+	if opts.help || len(opts.positional) == 0 {
 		fmt.Fprint(stdout, usage())
 		return 0
 	}
 
-	switch args[0] {
-	case "--help", "-h", "help":
+	command, rest := opts.positional[0], opts.positional[1:]
+	var runErr error
+	switch command {
+	case "help":
 		fmt.Fprint(stdout, usage())
 		return 0
-	case "--version", "-v", "version":
+	case "version":
 		fmt.Fprintln(stdout, version.Version)
 		return 0
+	case "where":
+		runErr = runWhere(stdout, opts)
+	case "branches":
+		runErr = runBranches(stdout, opts)
+	case "adopt":
+		runErr = runAdopt(stdout, opts)
+	case "purge":
+		runErr = runPurge(stdout, opts)
+	case "list", "snapshot":
+		runErr = runList(stdout, opts)
+	case "use":
+		runErr = runUse(stdout, opts, rest)
+	case "create":
+		runErr = runCreate(stdout, opts, rest)
+	case "rename":
+		runErr = runRename(stdout, opts, rest)
+	case "rename-file":
+		runErr = runRenameFile(stdout, opts, rest)
+	case "duplicate":
+		runErr = runDuplicate(stdout, opts, rest)
+	case "remove":
+		runErr = runRemove(stdout, opts, rest)
+	case "color":
+		runErr = runColor(stdout, opts, rest)
+	case "move":
+		runErr = runMove(stdout, opts, rest)
+	case "import":
+		runErr = runImport(stdout, opts, rest)
+	case "value":
+		runErr = runValue(stdout, opts, rest)
+	case "set":
+		runErr = runSet(stdout, opts, rest)
+	case "unset":
+		runErr = runUnset(stdout, opts, rest)
 	default:
-		fmt.Fprintf(stderr, "envh: unknown command %q\n\n", args[0])
-		fmt.Fprint(stderr, usage())
-		return 1
+		return fail(stderr, opts.json, usageErr(fmt.Sprintf("unknown command %q", command)))
 	}
+	if runErr != nil {
+		return fail(stderr, opts.json, runErr)
+	}
+	return 0
+}
+
+func parse(args []string) (options, error) {
+	opts := options{cwd: "."}
+	onlyPositional := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if onlyPositional {
+			opts.positional = append(opts.positional, arg)
+			continue
+		}
+		switch arg {
+		case "--":
+			onlyPositional = true
+		case "--json":
+			opts.json = true
+		case "--reveal":
+			opts.reveal = true
+		case "--activate":
+			opts.activate = true
+		case "--quiet", "-q":
+			opts.quiet = true
+		case "--yes":
+			opts.yes = true
+		case "--force":
+			opts.force = true
+		case "--dry-run":
+			opts.dryRun = true
+		case "--skip-disabled":
+			opts.skipDisabled = true
+		case "--help", "-h":
+			opts.help = true
+		case "--version", "-v":
+			opts.version = true
+		case "--cwd", "--name", "--branch":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			switch arg {
+			case "--cwd":
+				opts.cwd = args[i]
+			case "--branch":
+				opts.branch = args[i]
+			default:
+				opts.name = args[i]
+			}
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return opts, fmt.Errorf("unknown option %s", arg)
+			}
+			opts.positional = append(opts.positional, arg)
+		}
+	}
+	return opts, nil
+}
+
+// openProject opens the env folder for the project's current (or --branch) branch.
+func openProject(opts options) (*project.Project, error) {
+	loc, err := store.Locate(opts.cwd, opts.branch)
+	if err != nil {
+		return nil, err
+	}
+	p, err := project.Open(loc.Dir)
+	if err != nil {
+		return nil, err
+	}
+	p.Location = loc
+	return p, nil
+}
+
+// snapshotFor adds the project and branch context to a snapshot.
+func snapshotFor(p *project.Project) (jsonapi.Snapshot, error) {
+	snap, err := p.Snapshot()
+	if err != nil {
+		return snap, err
+	}
+	snap.Project = p.Location.ProjectID
+	snap.ProjectPath = p.Location.ProjectPath
+	snap.Branch = p.Location.Branch
+	snap.Branches = store.Branches(p.Location)
+	return snap, nil
+}
+
+func runWhere(stdout io.Writer, opts options) error {
+	loc, err := store.Locate(opts.cwd, opts.branch)
+	if err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(stdout, loc)
+	}
+	fmt.Fprintf(stdout, "Project:  %s\nBranch:   %s\nEnv dir:  %s\n", loc.ProjectPath, loc.Branch, loc.Dir)
+	return nil
+}
+
+type branchesResult struct {
+	Current  string   `json:"current"`
+	Branches []string `json:"branches"`
+}
+
+func runBranches(stdout io.Writer, opts options) error {
+	loc, err := store.Locate(opts.cwd, opts.branch)
+	if err != nil {
+		return err
+	}
+	names := store.Branches(loc)
+	if opts.json {
+		return writeJSON(stdout, branchesResult{Current: loc.Branch, Branches: names})
+	}
+	for _, name := range names {
+		marker := " "
+		if name == loc.Branch {
+			marker = "*"
+		}
+		fmt.Fprintf(stdout, "%s %s\n", marker, name)
+	}
+	return nil
+}
+
+// runAdopt copies project env files into storage. It never deletes anything.
+func runAdopt(stdout io.Writer, opts options) error {
+	loc, err := store.Locate(opts.cwd, opts.branch)
+	if err != nil {
+		return err
+	}
+	rep, err := store.Adopt(loc)
+	if err != nil {
+		return err
+	}
+	result := jsonapi.AdoptResult{
+		Ok:      true,
+		Dir:     loc.Dir,
+		Copied:  orEmpty(rep.Copied),
+		Same:    orEmpty(rep.Same),
+		Skipped: orEmpty(rep.Skipped),
+	}
+	if opts.json {
+		return writeJSON(stdout, result)
+	}
+	fmt.Fprintf(stdout, "Stored in %s\n", loc.Dir)
+	fmt.Fprintf(stdout, "Copied: %s\n", joinOrNone(result.Copied))
+	if len(result.Same) > 0 {
+		fmt.Fprintf(stdout, "Already stored (identical): %s\n", strings.Join(result.Same, ", "))
+	}
+	if len(result.Skipped) > 0 {
+		fmt.Fprintf(stdout, "Kept in project (differs from stored copy): %s\n", strings.Join(result.Skipped, ", "))
+	}
+	return nil
+}
+
+// runPurge deletes project copies that are identical to their stored copy.
+// It needs --yes unless --dry-run is given.
+func runPurge(stdout io.Writer, opts options) error {
+	if !opts.dryRun && !opts.yes {
+		return usageErr("purge deletes project env files; use --dry-run to preview, or --yes to confirm")
+	}
+	loc, err := store.Locate(opts.cwd, opts.branch)
+	if err != nil {
+		return err
+	}
+	rep, err := store.Purge(loc, opts.dryRun)
+	if err != nil {
+		return err
+	}
+	result := jsonapi.PurgeResult{
+		Ok:      true,
+		DryRun:  opts.dryRun,
+		Matched: orEmpty(rep.Matched),
+		Deleted: orEmpty(rep.Deleted),
+		Kept:    orEmpty(rep.Kept),
+	}
+	if opts.json {
+		return writeJSON(stdout, result)
+	}
+	if opts.dryRun {
+		fmt.Fprintf(stdout, "Would delete from project: %s\n", joinOrNone(result.Matched))
+	} else {
+		fmt.Fprintf(stdout, "Deleted from project: %s\n", joinOrNone(result.Deleted))
+	}
+	if len(result.Kept) > 0 {
+		fmt.Fprintf(stdout, "Kept in project (not stored, or differs from stored copy): %s\n", strings.Join(result.Kept, ", "))
+	}
+	return nil
+}
+
+func runList(stdout io.Writer, opts options) error {
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	snap, err := snapshotFor(p)
+	if err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(stdout, snap)
+	}
+
+	fmt.Fprintf(stdout, "Branch: %s\n", snap.Branch)
+	if len(snap.Environments) == 0 {
+		fmt.Fprintln(stdout, "No environment files found. Create one with: envh create <name>")
+		return nil
+	}
+	for _, env := range snap.Environments {
+		marker := " "
+		if env.Active {
+			marker = "*"
+		}
+		suffix := ""
+		if n := countEncrypted(env); n > 0 {
+			suffix = fmt.Sprintf(" (%d encrypted)", n)
+		}
+		fmt.Fprintf(stdout, "%s %-16s %-24s %d vars%s\n", marker, env.Name, env.File, len(env.Variables), suffix)
+	}
+	for _, warning := range snap.Warnings {
+		fmt.Fprintf(stdout, "warning: %s\n", warning)
+	}
+	return nil
+}
+
+func runUse(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 1 {
+		return usageErr("use requires <env>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.Use(args[0])
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Active environment: %s (%s)", env.Name, env.File))
+}
+
+func runCreate(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 1 {
+		return usageErr("create requires <name>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.Create(args[0], opts.activate)
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Created %s (%s)", env.Name, env.File))
+}
+
+func runRename(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 2 {
+		return usageErr("rename requires <env> <name>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.Rename(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Renamed to %s (%s)", env.Name, env.File))
+}
+
+func runRenameFile(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 2 {
+		return usageErr("rename-file requires <env> <file>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.RenameFile(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Renamed file to %s", env.File))
+}
+
+func runDuplicate(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 1 {
+		return usageErr("duplicate requires <env>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.Duplicate(args[0], opts.name)
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Duplicated to %s (%s)", env.Name, env.File))
+}
+
+func runRemove(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 1 {
+		return usageErr("remove requires <env>")
+	}
+	if !opts.yes {
+		return usageErr("remove deletes the env file; pass --yes to confirm")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.Remove(args[0])
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Deleted %s (%s)", env.Name, env.File))
+}
+
+func runColor(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 2 {
+		return usageErr("color requires <env> <color>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.SetColor(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("%s is now %s", env.Name, env.Color))
+}
+
+func runMove(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 2 || (args[1] != "up" && args[1] != "down") {
+		return usageErr("move requires <env> up|down")
+	}
+	delta := 1
+	if args[1] == "up" {
+		delta = -1
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.Move(args[0], delta)
+	if err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Moved %s %s", env.Name, args[1]))
+}
+
+func runImport(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 2 || args[0] != "postman" {
+		return usageErr("import requires: postman <file>")
+	}
+	data, err := os.ReadFile(args[1])
+	if err != nil {
+		return err
+	}
+	envs, err := postman.Parse(data)
+	if err != nil {
+		return err
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	importOpts := project.ImportOptions{
+		Force:        opts.force,
+		DryRun:       opts.dryRun,
+		SkipDisabled: opts.skipDisabled,
+	}
+	rep, err := p.ImportPostman(envs, importOpts)
+	if err != nil {
+		return err
+	}
+
+	result := jsonapi.ImportResult{
+		Ok:          true,
+		DryRun:      opts.dryRun,
+		Imported:    orEmpty(rep.Imported),
+		Conflicts:   orEmpty(rep.Conflicts),
+		SkippedKeys: orEmpty(rep.SkippedKeys),
+		Warnings:    orEmpty(rep.Warnings),
+	}
+	if !opts.dryRun {
+		snap, err := snapshotFor(p)
+		if err != nil {
+			return err
+		}
+		result.Snapshot = &snap
+	}
+
+	if opts.json {
+		return writeJSON(stdout, result)
+	}
+	if opts.dryRun {
+		fmt.Fprintf(stdout, "Would import: %s\n", joinOrNone(result.Imported))
+	} else {
+		fmt.Fprintf(stdout, "Imported: %s\n", joinOrNone(result.Imported))
+	}
+	if len(result.Conflicts) > 0 {
+		fmt.Fprintf(stdout, "Already exist (use --force to overwrite): %s\n", strings.Join(result.Conflicts, ", "))
+	}
+	if len(result.SkippedKeys) > 0 {
+		fmt.Fprintf(stdout, "Skipped keys with unsafe names: %s\n", strings.Join(result.SkippedKeys, ", "))
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stdout, "warning: %s\n", warning)
+	}
+	return nil
+}
+
+func runValue(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 2 {
+		return usageErr("value requires <env> <key>")
+	}
+	if !opts.reveal {
+		return usageErr("value prints secrets; pass --reveal to confirm")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	entry, err := p.Value(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(stdout, jsonapi.Value{Key: entry.Key, Value: entry.Value})
+	}
+	fmt.Fprintln(stdout, entry.Value)
+	return nil
+}
+
+func runSet(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 3 {
+		return usageErr("set requires <env> <key> <value>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	if err := p.Set(args[0], args[1], args[2]); err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Set %s in %s", args[1], args[0]))
+}
+
+func runUnset(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 2 {
+		return usageErr("unset requires <env> <key>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	if err := p.Unset(args[0], args[1]); err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Removed %s from %s", args[1], args[0]))
+}
+
+// report prints the refreshed snapshot as JSON, or a short message for humans.
+func report(stdout io.Writer, opts options, p *project.Project, message string) error {
+	snap, err := snapshotFor(p)
+	if err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(stdout, jsonapi.Mutation{Ok: true, Snapshot: snap})
+	}
+	if !opts.quiet {
+		fmt.Fprintln(stdout, message)
+	}
+	return nil
+}
+
+func fail(stderr io.Writer, asJSON bool, err error) int {
+	code, exit := classify(err)
+	if asJSON {
+		_ = json.NewEncoder(stderr).Encode(jsonapi.Error{Ok: false, Code: code, Message: err.Error()})
+	} else {
+		fmt.Fprintf(stderr, "envh: %s\n", err)
+	}
+	return exit
+}
+
+func classify(err error) (string, int) {
+	switch {
+	case errors.Is(err, errUsage):
+		return "USAGE", 1
+	case errors.Is(err, project.ErrEnvNotFound):
+		return "ENV_NOT_FOUND", 2
+	case errors.Is(err, project.ErrKeyNotFound):
+		return "KEY_NOT_FOUND", 2
+	case errors.Is(err, project.ErrAmbiguous):
+		return "ENV_AMBIGUOUS", 2
+	case errors.Is(err, project.ErrFileExists):
+		return "FILE_EXISTS", 4
+	case errors.Is(err, project.ErrInvalidName):
+		return "INVALID_NAME", 1
+	case errors.Is(err, project.ErrInvalidFile):
+		return "INVALID_FILE", 1
+	case errors.Is(err, project.ErrInvalidColor):
+		return "INVALID_COLOR", 1
+	case errors.Is(err, envfile.ErrEncrypted):
+		return "ENCRYPTED_READ_ONLY", 4
+	case errors.Is(err, envfile.ErrInvalidKey):
+		return "INVALID_KEY", 1
+	case errors.Is(err, postman.ErrInvalid):
+		return "POSTMAN_INVALID", 3
+	case errors.Is(err, metadata.ErrInvalid):
+		return "METADATA_INVALID", 3
+	case errors.Is(err, os.ErrNotExist):
+		return "NOT_FOUND", 2
+	default:
+		return "FAILED", 5
+	}
+}
+
+func usageErr(message string) error {
+	return fmt.Errorf("%w: %s", errUsage, message)
+}
+
+func orEmpty(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func joinOrNone(values []string) string {
+	if len(values) == 0 {
+		return "nothing"
+	}
+	return strings.Join(values, ", ")
+}
+
+func countEncrypted(env jsonapi.Environment) int {
+	count := 0
+	for _, variable := range env.Variables {
+		if variable.Encrypted {
+			count++
+		}
+	}
+	return count
+}
+
+func writeJSON(w io.Writer, v any) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(v)
 }
 
 func usage() string {
@@ -33,14 +658,47 @@ func usage() string {
 Standalone environment manager for .env files.
 
 Usage:
-  envh <command> [options]
+  envh [--cwd <dir>] [--branch <name>] [--json] <command> [options]
 
-Phase 0 scaffold: commands are not implemented yet.
-Global options:
+Storage (env files live outside the project, one folder per branch):
+  where                          Show where this branch's env files are stored
+  branches                       List branches that have env files
+  adopt                          Copy .env files from the project into storage (never deletes)
+  purge --dry-run | --yes        Delete project copies that are identical to the stored copy
+
+Environments:
+  list, snapshot                 Show environments and variable keys (no values)
+  create <name> [--activate]     Create .env.<name>
+  use <env>                      Set the active environment
+  rename <env> <name>            Change the display name
+  rename-file <env> <file>       Rename the file on disk (.env.<name>)
+  duplicate <env> [--name <n>]   Copy an environment to a new file
+  remove <env> --yes             Delete an environment file
+  color <env> <color>            gray, green, yellow, red, blue, purple, orange
+  move <env> up|down             Change the order in the list
+
+Variables:
+  value <env> <key> --reveal     Print a value
+  set <env> <key> -- <value>     Set a value, adding the key when missing
+  unset <env> <key>              Remove every occurrence of a key
+
+Import:
+  import postman <file> [--dry-run] [--force] [--skip-disabled]
+
+Options:
+  --cwd <dir>      Project directory (default: current directory)
+  --branch <name>  Use another branch's env files instead of the current one
+  --json           Machine-readable output; errors go to stderr as JSON
+  --reveal         Allow value to print a secret
+  --activate       Activate a newly created environment
+  --force          Overwrite existing files during import
+  --dry-run        Show what an import or purge would do without writing
+  --skip-disabled  Leave out disabled Postman values
+  --quiet, -q      Suppress confirmation text
   --help, -h       Show this help
   --version, -v    Show the version
 
-Documentation:
-  env-manager-plan.md
+Put -- before values that start with a dash:
+  envh set Local KEY -- -value
 `, version.Version)
 }

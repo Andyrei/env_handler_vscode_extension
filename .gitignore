@@ -6,8 +6,8 @@ packages/vscode/bin/
 .DS_Store
 *.log
 coverage/
-envh
-envh.exe
+/envh
+/envh.exe
 
 # Local environment files are never part of this project.
 .env

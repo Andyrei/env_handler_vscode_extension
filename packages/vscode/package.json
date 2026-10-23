@@ -15,7 +15,7 @@
     "env",
     "dotenv",
     "environment",
-    "secrets"
+    "postman"
   ],
   "main": "./dist/extension.js",
   "extensionKind": [
@@ -25,23 +25,278 @@
     "virtualWorkspaces": false,
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Env Handler is read-only in untrusted workspaces."
+      "description": "Env Handler can list environments but cannot change files or metadata in untrusted workspaces."
     }
   },
   "activationEvents": [
-    "onCommand:envHandler.showVersion"
+    "onView:envHandler.tree",
+    "onCommand:envHandler.openPanel"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "envHandler",
+          "title": "Environments",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "envHandler": [
+        {
+          "id": "envHandler.tree",
+          "name": "Environments"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "envHandler.tree",
+        "when": "workspaceFolderCount == 0",
+        "contents": "Open a folder to manage its .env environments."
+      },
+      {
+        "view": "envHandler.tree",
+        "when": "workspaceFolderCount > 0",
+        "contents": "Create an environment or import a Postman environment.\n[Open Environment Manager](command:envHandler.openPanel)\n[Create Environment](command:envHandler.createEnvironment)"
+      }
+    ],
     "commands": [
       {
+        "command": "envHandler.openPanel",
+        "title": "Open Environment Manager",
+        "category": "Env Handler",
+        "icon": "$(window)"
+      },
+      {
+        "command": "envHandler.createEnvironment",
+        "title": "New Environment",
+        "category": "Env Handler",
+        "icon": "$(add)"
+      },
+      {
+        "command": "envHandler.importPostman",
+        "title": "Import Postman Environment",
+        "category": "Env Handler",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "envHandler.switchEnvironment",
+        "title": "Switch Active Environment",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.refresh",
+        "title": "Refresh",
+        "category": "Env Handler",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "envHandler.setActive",
+        "title": "Set Active",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.renameEnvironment",
+        "title": "Rename",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.renameEnvironmentFile",
+        "title": "Rename File",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.duplicateEnvironment",
+        "title": "Duplicate",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.deleteEnvironment",
+        "title": "Delete",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.setColor",
+        "title": "Set Color",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.moveUp",
+        "title": "Move Up",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.moveDown",
+        "title": "Move Down",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.addVariable",
+        "title": "Add Variable",
+        "category": "Env Handler",
+        "icon": "$(add)"
+      },
+      {
+        "command": "envHandler.editVariable",
+        "title": "Edit Variable",
+        "category": "Env Handler",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "envHandler.deleteVariable",
+        "title": "Delete Variable",
+        "category": "Env Handler",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "envHandler.copyValue",
+        "title": "Copy Value",
+        "category": "Env Handler",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "envHandler.openFile",
+        "title": "Open File",
+        "category": "Env Handler"
+      },
+      {
+        "command": "envHandler.adoptProjectFiles",
+        "title": "Copy Project Env Files to Local Storage",
+        "category": "Env Handler",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "envHandler.deleteProjectCopies",
+        "title": "Delete Project Env Copies (already stored)",
+        "category": "Env Handler",
+        "icon": "$(trash)"
+      },
+      {
         "command": "envHandler.showVersion",
-        "title": "Env Handler: Show Version"
+        "title": "Show Version",
+        "category": "Env Handler"
       }
     ],
     "menus": {
-      "commandPalette": [
+      "view/title": [
         {
-          "command": "envHandler.showVersion"
+          "command": "envHandler.openPanel",
+          "when": "view == envHandler.tree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "envHandler.createEnvironment",
+          "when": "view == envHandler.tree",
+          "group": "navigation@2"
+        },
+        {
+          "command": "envHandler.importPostman",
+          "when": "view == envHandler.tree",
+          "group": "navigation@3"
+        },
+        {
+          "command": "envHandler.adoptProjectFiles",
+          "when": "view == envHandler.tree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "envHandler.deleteProjectCopies",
+          "when": "view == envHandler.tree",
+          "group": "navigation@5"
+        },
+        {
+          "command": "envHandler.refresh",
+          "when": "view == envHandler.tree",
+          "group": "navigation@6"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "envHandler.setActive",
+          "when": "view == envHandler.tree && viewItem == env",
+          "group": "0_active"
+        },
+        {
+          "command": "envHandler.addVariable",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "inline@1"
+        },
+        {
+          "command": "envHandler.renameEnvironment",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "envHandler.renameEnvironmentFile",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "1_edit@2"
+        },
+        {
+          "command": "envHandler.duplicateEnvironment",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "1_edit@3"
+        },
+        {
+          "command": "envHandler.setColor",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "1_edit@4"
+        },
+        {
+          "command": "envHandler.moveUp",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "2_order@1"
+        },
+        {
+          "command": "envHandler.moveDown",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "2_order@2"
+        },
+        {
+          "command": "envHandler.openFile",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "3_open"
+        },
+        {
+          "command": "envHandler.deleteEnvironment",
+          "when": "view == envHandler.tree && viewItem =~ /^env/",
+          "group": "9_danger"
+        },
+        {
+          "command": "envHandler.editVariable",
+          "when": "view == envHandler.tree && viewItem == variable",
+          "group": "inline@1"
+        },
+        {
+          "command": "envHandler.copyValue",
+          "when": "view == envHandler.tree && viewItem == variable",
+          "group": "inline@2"
+        },
+        {
+          "command": "envHandler.deleteVariable",
+          "when": "view == envHandler.tree && viewItem == variable",
+          "group": "9_danger"
+        },
+        {
+          "command": "envHandler.createEnvironment",
+          "when": "view == envHandler.tree && viewItem == folder",
+          "group": "1_create"
+        },
+        {
+          "command": "envHandler.importPostman",
+          "when": "view == envHandler.tree && viewItem == folder",
+          "group": "1_create"
+        },
+        {
+          "command": "envHandler.adoptProjectFiles",
+          "when": "view == envHandler.tree && viewItem == folder",
+          "group": "2_storage@1"
+        },
+        {
+          "command": "envHandler.deleteProjectCopies",
+          "when": "view == envHandler.tree && viewItem == folder",
+          "group": "2_storage@2"
         }
       ]
     }

@@ -194,10 +194,7 @@ func RemoveEntry(text string, entry Entry) (string, error) {
 
 // AddKey appends a new assignment with a trailing newline.
 func AddKey(text, key, value string) (string, error) {
-	if err := validateKey(key); err != nil {
-		return "", err
-	}
-	formatted, err := formatValue(value, 0)
+	assignment, err := Line(key, value)
 	if err != nil {
 		return "", err
 	}
@@ -205,7 +202,7 @@ func AddKey(text, key, value string) (string, error) {
 	if strings.Contains(text, "\r\n") {
 		eol = "\r\n"
 	}
-	line := key + "=" + formatted + eol
+	line := assignment + eol
 	if text == "" {
 		return line, nil
 	}
@@ -213,6 +210,18 @@ func AddKey(text, key, value string) (string, error) {
 		return text + line, nil
 	}
 	return text + eol + line, nil
+}
+
+// Line formats one assignment without a line ending.
+func Line(key, value string) (string, error) {
+	if err := validateKey(key); err != nil {
+		return "", err
+	}
+	formatted, err := formatValue(value, 0)
+	if err != nil {
+		return "", err
+	}
+	return key + "=" + formatted, nil
 }
 
 func hasExportPrefix(text string, start, end int) bool {
