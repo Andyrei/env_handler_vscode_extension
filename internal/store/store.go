@@ -64,6 +64,12 @@ func Home() (string, error) {
 	return filepath.Join(config, "env-handler"), nil
 }
 
+// projectID computes the stable ID for a project path.
+func projectID(root string) string {
+	sum := sha256.Sum256([]byte(root))
+	return unsafeName.ReplaceAllString(filepath.Base(root), "-") + "-" + hex.EncodeToString(sum[:])[:12]
+}
+
 // BranchDir returns the env folder for a branch of the same project.
 func BranchDir(loc Location, branch string) string {
 	return filepath.Join(loc.ProjectDir, "branches", url.PathEscape(branch))
@@ -82,9 +88,7 @@ func Locate(repo, branchOverride string) (Location, error) {
 	}
 	root = filepath.Clean(root)
 
-	sum := sha256.Sum256([]byte(root))
-	id := unsafeName.ReplaceAllString(filepath.Base(root), "-") + "-" + hex.EncodeToString(sum[:])[:12]
-
+	id := projectID(root)
 	branch := strings.TrimSpace(branchOverride)
 	if branch == "" {
 		branch = currentBranch(root)
@@ -107,6 +111,81 @@ func Locate(repo, branchOverride string) (Location, error) {
 		return Location{}, err
 	}
 	return loc, nil
+}
+
+// LocateByID finds the project directory for a project ID.
+func LocateByID(projectID string) (string, error) {
+	home, err := Home()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, "projects", projectID)
+	if _, err := os.Stat(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// ListProjects returns all project IDs in the store.
+func ListProjects() ([]string, error) {
+	home, err := Home()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(home, "projects"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var ids []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// Relink copies all branch folders from an old project ID to a new one.
+// Returns the number of branches copied.
+func Relink(oldProjectID, newRepo string) (int, error) {
+	oldDir, err := LocateByID(oldProjectID)
+	if err != nil {
+		return 0, err
+	}
+	newLoc, err := Locate(newRepo, "")
+	if err != nil {
+		return 0, err
+	}
+
+	branchesDir := filepath.Join(oldDir, "branches")
+	entries, err := os.ReadDir(branchesDir)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(branchesDir, entry.Name())
+		dst := filepath.Join(newLoc.ProjectDir, "branches", entry.Name())
+		if err := copyDir(src, dst); err != nil {
+			return count, err
+		}
+		count++
+	}
+
+	// Copy project.json.
+	oldInfo, _ := readProjectInfo(Location{ProjectDir: oldDir, ProjectPath: ""})
+	if oldInfo != nil {
+		_ = writeProjectInfo(newLoc, oldInfo)
+	}
+	return count, nil
 }
 
 // Branches lists every branch that has an env folder for this project.
@@ -327,4 +406,29 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return fsx.WriteFileAtomic(dst, data, info.Mode().Perm())
+}
+
+func copyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return fsx.WriteFileAtomic(target, data, info.Mode().Perm())
+	})
 }

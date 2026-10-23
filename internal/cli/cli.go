@@ -81,6 +81,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		runErr = runAdopt(stdout, opts)
 	case "purge":
 		runErr = runPurge(stdout, opts)
+	case "relink":
+		runErr = runRelink(stdout, opts, rest)
 	case "list", "snapshot":
 		runErr = runList(stdout, opts)
 	case "use":
@@ -405,6 +407,24 @@ func runPurge(stdout io.Writer, opts options) error {
 	}
 	if len(result.Kept) > 0 {
 		fmt.Fprintf(stdout, "Kept in project (not stored, or differs from stored copy): %s\n", strings.Join(result.Kept, ", "))
+	}
+	return nil
+}
+
+func runRelink(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 1 {
+		return usageErr("relink requires <old-project-id>")
+	}
+	loc, err := store.Locate(opts.cwd, opts.branch)
+	if err != nil {
+		return err
+	}
+	count, err := store.Relink(args[0], opts.cwd)
+	if err != nil {
+		return err
+	}
+	if !opts.quiet {
+		fmt.Fprintf(stdout, "Relinked %d branch(es) from %s to %s\n", count, args[0], loc.ProjectID)
 	}
 	return nil
 }
@@ -1073,6 +1093,7 @@ Storage (env files live outside the project, one folder per branch):
   overview                       List every branch and its environments
   adopt                          Copy .env files from the project into storage (never deletes)
   purge --dry-run | --yes        Delete project copies that are identical to the stored copy
+  relink <old-project-id>        Re-associate envs after moving or renaming the repo
   gitignore [--all] [--dry-run]  Add env files to .gitignore (active + base, or all with --all)
 
 Environments:
