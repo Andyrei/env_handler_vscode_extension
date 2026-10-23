@@ -11,7 +11,8 @@
     "packages/vscode"
   ],
   "scripts": {
-    "test": "go test ./cmd/... ./internal/...",
+    "test": "go test ./cmd/... ./internal/... && npm run test:extension",
+    "test:extension": "tsx packages/vscode/test/unit/helpers.test.ts",
     "test:go": "go test ./cmd/... ./internal/...",
     "lint": "npm run lint:go && npm run lint:ts && npm run lint:scripts",
     "lint:go": "go vet ./cmd/... ./internal/... && node scripts/check-gofmt.js",
@@ -29,6 +30,7 @@
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "standard": "^17.1.2",
+    "tsx": "^4.19.0",
     "typescript": "^5.9.0"
   },
   "standard": {

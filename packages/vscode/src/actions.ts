@@ -3,11 +3,8 @@ import * as vscode from 'vscode'
 import type { Envh, Scope } from './cli'
 import { EnvhError } from './cli'
 import type { EnvStore } from './store'
-import { errorMessage } from './store'
+import { errorMessage, FILE_PATTERN, KEY_PATTERN } from './helpers'
 import { type AdoptResult, COLORS, type Environment, type ImportResult, type Mutation, type PurgeResult } from './types'
-
-const KEY_PATTERN = /^[^\s=#:]+$/
-const FILE_PATTERN = /^\.env(\.[A-Za-z0-9_-]+)+$/
 
 // Every environment and variable change goes through here, and through the Go CLI.
 // Each change targets the branch the environment belongs to.

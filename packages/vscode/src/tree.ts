@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import { describeEnvironment, themeColorName } from './helpers'
 import type { EnvStore } from './store'
 import type { Environment, Snapshot, Variable } from './types'
 
@@ -131,18 +132,10 @@ export class EnvTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 }
 
 function describe (env: Environment, encrypted: number): string {
-  const parts: string[] = []
-  if (env.active) {
-    parts.push('active')
-  }
-  parts.push(`${env.variables.length} vars`)
-  if (encrypted > 0) {
-    parts.push(`${encrypted} encrypted`)
-  }
-  return parts.join(' · ')
+  return describeEnvironment(env.variables.length, encrypted, env.active)
 }
 
 function themeColor (color: string): vscode.ThemeColor | undefined {
-  const named = new Set(['red', 'blue', 'yellow', 'orange', 'green', 'purple'])
-  return named.has(color) ? new vscode.ThemeColor(`charts.${color}`) : undefined
+  const name = themeColorName(color)
+  return name === undefined ? undefined : new vscode.ThemeColor(name)
 }
