@@ -33,6 +33,26 @@
     "onCommand:envHandler.openPanel"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Env Handler",
+      "properties": {
+        "envHandler.applyToDebug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Inject the active environment into debug sessions."
+        },
+        "envHandler.debugTypes": {
+          "type": "array",
+          "default": ["node", "pwa-node", "python", "debugpy", "go", "delve", "rust", "lldb", "cppdbg", "gdb"],
+          "description": "Debug types that receive environment injection."
+        },
+        "envHandler.runCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Default command for Run With Environment."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -178,6 +198,12 @@
         "title": "Delete Project Env Copies (already stored)",
         "category": "Env Handler",
         "icon": "$(trash)"
+      },
+      {
+        "command": "envHandler.runWithEnvironment",
+        "title": "Run With Environment",
+        "category": "Env Handler",
+        "icon": "$(run)"
       },
       {
         "command": "envHandler.showVersion",

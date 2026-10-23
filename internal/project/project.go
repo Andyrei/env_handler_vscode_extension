@@ -463,6 +463,11 @@ func (p *Project) save() error {
 	})
 }
 
+// Entries parses a file and returns its entries plus raw text.
+func (p *Project) Entries(file string) ([]envfile.Entry, string, error) {
+	return p.entries(file)
+}
+
 func (p *Project) entries(file string) ([]envfile.Entry, string, error) {
 	data, err := os.ReadFile(p.abs(file))
 	if err != nil {

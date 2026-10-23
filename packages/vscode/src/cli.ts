@@ -75,6 +75,12 @@ export class Envh {
     return this.run<ValuePayload>(scope.cwd, scope.branch, ['value', env, key, '--reveal'])
   }
 
+  resolve (cwd: string, env: string, skipEncrypted: boolean): Promise<{ values: Record<string, string> }> {
+    const args = ['resolve', '--env', env]
+    if (skipEncrypted) args.push('--skip-encrypted')
+    return this.run<{ values: Record<string, string> }>(cwd, undefined, args)
+  }
+
   // Storage commands always act on the current branch.
   gitignore (cwd: string, dryRun: boolean): Promise<{ notIgnored: string[], added: string[] }> {
     return this.run<{ notIgnored: string[], added: string[] }>(cwd, undefined, ['gitignore', dryRun ? '--dry-run' : '--all'])

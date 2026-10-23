@@ -6,6 +6,7 @@ import { EnvActions } from './actions'
 import { binaryPath, Envh } from './cli'
 import { EnvPanel } from './panel'
 import { EnvStore } from './store'
+import { registerDebugProvider } from './debug'
 import { EnvNode, EnvTreeProvider, FolderNode, VariableNode } from './tree'
 import type { Environment } from './types'
 
@@ -128,12 +129,41 @@ export function activate (context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('envHandler.openFile', (arg?: unknown) => withEnv(arg, async (folder, env) => {
       const root = store.rootFor(folder, env.branch)
       await vscode.window.showTextDocument(vscode.Uri.file(path.join(root, ...env.file.split('/'))))
-    }))
+    })),
+    vscode.commands.registerCommand('envHandler.runWithEnvironment', async (arg?: unknown) => {
+      const folderPath = await resolveFolder(arg)
+      if (folderPath === undefined) return
+      const state = store.stateFor(folderPath)
+      const snapshot = state?.overview?.branches.find(b => b.branch === state.overview?.currentBranch)
+      if (snapshot === undefined || snapshot.environments.length === 0) {
+        await vscode.window.showInformationMessage('No environments yet. Create one first.')
+        return
+      }
+      const active = snapshot.environments.find(e => e.active) ?? snapshot.environments[0]
+      const command = await vscode.window.showInputBox({
+        prompt: `Command to run with ${active.name} (${active.branch})`,
+        value: vscode.workspace.getConfiguration('envHandler').get<string>('runCommand', ''),
+        placeHolder: 'npm start',
+        ignoreFocusOut: true
+      })
+      if (command === undefined || command.trim().length === 0) return
+
+      const terminal = vscode.window.createTerminal({
+        name: `Env Handler: ${active.name}`,
+        cwd: folderPath,
+        env: {}
+      })
+      const root = store.rootFor(folderPath, active.branch)
+      const binary = binaryPath(context.extensionPath)
+      terminal.sendText(`${JSON.stringify(binary)} run --cwd ${JSON.stringify(folderPath)} --env ${JSON.stringify(active.file)} -- ${command}`)
+      terminal.show()
+    })
   )
 
   if (!fs.existsSync(binary)) {
     void vscode.window.showErrorMessage('Env Handler: the bundled envh binary is missing. Run npm run build.')
   }
+  registerDebugProvider(context, envh, store)
   void store.refresh()
 }
 

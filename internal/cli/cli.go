@@ -23,20 +23,22 @@ import (
 var errUsage = errors.New("usage error")
 
 type options struct {
-	cwd          string
-	branch       string
-	name         string
-	json         bool
-	reveal       bool
-	activate     bool
-	quiet        bool
-	yes          bool
-	force        bool
-	dryRun       bool
-	skipDisabled bool
-	help         bool
-	version      bool
-	positional   []string
+	cwd           string
+	branch        string
+	name          string
+	json          bool
+	reveal        bool
+	activate      bool
+	quiet         bool
+	yes           bool
+	force         bool
+	dryRun        bool
+	skipDisabled  bool
+	skipEncrypted bool
+	env           string
+	help          bool
+	version       bool
+	positional    []string
 }
 
 // Run executes the CLI and returns the process exit code.
@@ -101,6 +103,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		runErr = runImport(stdout, opts, rest)
 	case "value":
 		runErr = runValue(stdout, opts, rest)
+	case "resolve":
+		runErr = runResolve(stdout, opts, rest)
 	case "set":
 		runErr = runSet(stdout, opts, rest)
 	case "unset":
@@ -142,6 +146,14 @@ func parse(args []string) (options, error) {
 			opts.dryRun = true
 		case "--skip-disabled":
 			opts.skipDisabled = true
+		case "--skip-encrypted":
+			opts.skipEncrypted = true
+		case "--env":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.env = args[i]
 		case "--help", "-h":
 			opts.help = true
 		case "--version", "-v":
@@ -744,6 +756,60 @@ func runImport(stdout io.Writer, opts options, args []string) error {
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(stdout, "warning: %s\n", warning)
+	}
+	return nil
+}
+
+func runResolve(stdout io.Writer, opts options, args []string) error {
+	envSelector := opts.env
+	if envSelector == "" && len(args) >= 2 && args[0] == "--env" {
+		envSelector = args[1]
+		args = args[2:]
+	}
+	if envSelector == "" {
+		p, err := openProject(opts)
+		if err != nil {
+			return err
+		}
+		if p.Resolved.Active == "" {
+			return usageErr("no active environment; pass --env <env>")
+		}
+		envSelector = p.Resolved.Active
+	}
+
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	env, err := p.Find(envSelector)
+	if err != nil {
+		return err
+	}
+
+	_, _, err = p.Entries(env.File)
+	if err != nil {
+		return err
+	}
+
+	values := make(map[string]string)
+	// Load base layer first, then active.
+	for _, layer := range layers.Files(p.Location.ProjectPath, env.File) {
+		layerEntries, _, err := p.Entries(layer)
+		if err != nil {
+			continue
+		}
+		for _, e := range layerEntries {
+			if opts.skipEncrypted && e.Encrypted {
+				continue
+			}
+			values[e.Key] = e.Value
+		}
+	}
+	if opts.json {
+		return writeJSON(stdout, map[string]any{"environment": env.File, "layers": layers.Files(p.Location.ProjectPath, env.File), "values": values})
+	}
+	for k, v := range values {
+		fmt.Fprintf(stdout, "%s=%s\n", k, v)
 	}
 	return nil
 }
