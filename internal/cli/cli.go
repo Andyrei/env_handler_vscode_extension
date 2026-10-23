@@ -17,6 +17,7 @@ import (
 	"env-handler/internal/postman"
 	"env-handler/internal/project"
 	"env-handler/internal/store"
+	"env-handler/internal/swap"
 	"env-handler/internal/version"
 )
 
@@ -35,6 +36,7 @@ type options struct {
 	dryRun        bool
 	skipDisabled  bool
 	skipEncrypted bool
+	restore       bool
 	env           string
 	help          bool
 	version       bool
@@ -71,6 +73,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		runErr = runBranches(stdout, opts)
 	case "overview":
 		runErr = runOverview(stdout, opts)
+	case "swap":
+		runErr = runSwap(stdout, opts, rest)
 	case "gitignore":
 		runErr = runGitignore(stdout, opts, rest)
 	case "adopt":
@@ -146,6 +150,8 @@ func parse(args []string) (options, error) {
 			opts.dryRun = true
 		case "--skip-disabled":
 			opts.skipDisabled = true
+		case "--restore":
+			opts.restore = true
 		case "--skip-encrypted":
 			opts.skipEncrypted = true
 		case "--env":
@@ -399,6 +405,104 @@ func runPurge(stdout io.Writer, opts options) error {
 	}
 	if len(result.Kept) > 0 {
 		fmt.Fprintf(stdout, "Kept in project (not stored, or differs from stored copy): %s\n", strings.Join(result.Kept, ", "))
+	}
+	return nil
+}
+
+func runSwap(stdout io.Writer, opts options, args []string) error {
+	restore := opts.restore
+	envSelector := ""
+	forceCopy := false
+	force := opts.force
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--copy":
+			forceCopy = true
+		case "--env":
+			if i+1 >= len(args) {
+				return usageErr("--env requires a value")
+			}
+			i++
+			envSelector = args[i]
+		}
+	}
+
+	loc, err := store.Locate(opts.cwd, opts.branch)
+	if err != nil {
+		return err
+	}
+
+	// Read swap state from sidecar.
+	sidecar, err := metadata.Load(loc.Dir)
+	if err != nil {
+		return err
+	}
+
+	if restore {
+		if sidecar.Swap == nil {
+			return usageErr("no active swap to restore")
+		}
+		state := swap.State{
+			Target: sidecar.Swap.Target,
+			Backup: sidecar.Swap.Backup,
+			Mode:   sidecar.Swap.Mode,
+			Hash:   sidecar.Swap.Hash,
+		}
+		if err := swap.Restore(loc.ProjectPath, state, force); err != nil {
+			return err
+		}
+		// Clear swap state.
+		sidecar.Swap = nil
+		if err := metadata.Save(loc.Dir, sidecar); err != nil {
+			return err
+		}
+		if !opts.quiet {
+			fmt.Fprintln(stdout, "Restored .env from backup.")
+		}
+		return nil
+	}
+
+	// Enable swap.
+	p, err := project.Open(loc.Dir)
+	if err != nil {
+		return err
+	}
+	if envSelector == "" {
+		if p.Resolved.Active == "" {
+			return usageErr("no active environment; use --env <env>")
+		}
+		envSelector = p.Resolved.Active
+	}
+	env, err := p.Find(envSelector)
+	if err != nil {
+		return err
+	}
+
+	backupName := ".env.backup"
+	if _, err := os.Stat(filepath.Join(loc.ProjectPath, backupName)); err == nil {
+		backupName = ".env.backup." + strings.ReplaceAll(loc.Branch, "/", "-")
+	}
+
+	state, err := swap.Enable(loc.ProjectPath, env.File, backupName, forceCopy)
+	if err != nil {
+		return err
+	}
+
+	// Save swap state.
+	sidecar.Swap = &metadata.SwapState{
+		Target: state.Target,
+		Backup: state.Backup,
+		Mode:   state.Mode,
+		Hash:   state.Hash,
+	}
+	if err := metadata.Save(loc.Dir, sidecar); err != nil {
+		return err
+	}
+
+	if !opts.quiet {
+		fmt.Fprintf(stdout, "Swapped .env -> %s (%s)\n", env.File, state.Mode)
+		fmt.Fprintf(stdout, "Backup: %s\n", state.Backup)
+		fmt.Fprintln(stdout, "Layering is bypassed while swap is active.")
 	}
 	return nil
 }
@@ -984,6 +1088,8 @@ Environments:
   trash empty --yes              Permanently remove trashed files
   color <env> <color>            gray, green, yellow, red, blue, purple, orange
   move <env> up|down             Change the order in the list
+  swap [--env <env>] [--copy]    Replace .env with the active env (backup first)
+  swap --restore [--force]       Restore .env from backup
 
 Variables:
   value <env> <key> --reveal     Print a value

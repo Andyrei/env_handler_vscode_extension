@@ -41,6 +41,15 @@ type Sidecar struct {
 	Version      int           `json:"version"`
 	Active       string        `json:"active,omitempty"`
 	Environments []Environment `json:"environments"`
+	Swap         *SwapState    `json:"swap,omitempty"`
+}
+
+// SwapState describes an active swap.
+type SwapState struct {
+	Target string `json:"target"`
+	Backup string `json:"backup"`
+	Mode   string `json:"mode"`
+	Hash   string `json:"hash,omitempty"`
 }
 
 // Resolved is the sidecar reconciled against the files on disk.
