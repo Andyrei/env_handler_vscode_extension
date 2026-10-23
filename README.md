@@ -10,9 +10,8 @@ of truth.
 
 ## Status
 
-Phase 0 complete: Go CLI scaffold, TypeScript extension shell, build pipeline,
-no-dotenvx guard, and VSIX packaging. Environment commands and the panel arrive
-in the following phases.
+Core CLI and extension panel are functional. Debug integration, run-with-environment,
+Postman import, branch-aware storage, and gitignore guard are implemented.
 
 See [`env-manager-plan.md`](./env-manager-plan.md) for the full design and
 [`AGENTS.md`](./AGENTS.md) for repository rules.
@@ -54,16 +53,38 @@ npm test
 npm run build
 ```
 
-Run the CLI from the checkout:
+## CLI usage
 
 ```sh
-go run ./cmd/envh --help
-```
+envh list                          # show environments and variable keys
+envh use <env>                     # set the active environment
+envh create <name> [--activate]    # create .env.<name>
+envh set <env> <key> -- <value>   # set a value
+envh unset <env> <key>             # remove a key
+envh value <env> <key> --reveal    # print a value
+envh resolve --env <env> --json    # merged env for debug/run
+envh run -- <command>              # run with active env loaded
+envh export --format shell         # print shell exports
 
-After a build:
+# Storage (env files live outside the project, one folder per branch)
+envh where                         # show where env files are stored
+envh branches                      # list branches with env files
+envh overview                      # list every branch and its environments
+envh adopt                         # copy project env files to local storage
+envh purge --dry-run | --yes       # delete project copies (identical only)
+envh gitignore [--all] [--dry-run] # add env files to .gitignore
 
-```sh
-packages/vscode/bin/envh --version
+# Management
+envh rename <env> <name>           # change display name
+envh rename-file <env> <file>      # rename the file on disk
+envh duplicate <env> [--name <n>]  # copy an environment
+envh remove <env> --yes            # move to trash
+envh restore <file>                # restore from trash
+envh trash list                    # list trashed files
+envh trash empty --yes             # empty trash
+envh color <env> <color>           # set color
+envh move <env> up|down            # reorder
+envh import postman <file>         # import a Postman environment
 ```
 
 ## Package and install the extension
@@ -76,7 +97,7 @@ npm run install:vsix
 Then run **Developer: Reload Window** in VS Code.
 
 The VSIX is written to `dist/env-handler-vscode-0.1.0.vsix`. It contains the Go
-binary for the current platform.
+binary for the current platform (macOS Apple Silicon).
 
 ## Design highlights
 
@@ -85,8 +106,8 @@ binary for the current platform.
 - Swap bypasses base layering and keeps a timestamped backup.
 - `encrypted:` values are detected, shown read-only, and never decrypted.
 - Debug integration is opt-in and injects `env` without editing `launch.json`.
-- The extension bundles its own `envh` runtime; no global CLI install is
-  required for run/task support.
+- The extension bundles its own `envh` runtime; no global CLI install is required.
+- Env files are stored outside the project, one folder per git branch.
 
 ## License
 

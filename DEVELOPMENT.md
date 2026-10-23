@@ -70,7 +70,8 @@ platform or add a release matrix later.
 ## Testing
 
 Go tests use `testing` and temporary directories. Tests must stay offline and
-must not touch the real workspace.
+must not touch the real workspace. `TestMain` in `internal/cli` sets
+`ENVH_HOME` to a temp folder so tests never touch the user's real store.
 
 Before finishing a change:
 
@@ -91,3 +92,5 @@ npm run build
 - `encrypted:` entries are read-only.
 - The extension must not parse `.env` content; call the Go CLI.
 - Keep changes small and phase-scoped. See `env-manager-plan.md`.
+- Env files are stored outside the project. Tests must not touch the real store.
+- Commit without pushing unless asked.
