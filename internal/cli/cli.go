@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"env-handler/internal/envfile"
+	"env-handler/internal/gitignore"
 	"env-handler/internal/jsonapi"
+	"env-handler/internal/layers"
 	"env-handler/internal/metadata"
 	"env-handler/internal/postman"
 	"env-handler/internal/project"
@@ -66,6 +69,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		runErr = runBranches(stdout, opts)
 	case "overview":
 		runErr = runOverview(stdout, opts)
+	case "gitignore":
+		runErr = runGitignore(stdout, opts, rest)
 	case "adopt":
 		runErr = runAdopt(stdout, opts)
 	case "purge":
@@ -382,6 +387,74 @@ func runPurge(stdout io.Writer, opts options) error {
 	}
 	if len(result.Kept) > 0 {
 		fmt.Fprintf(stdout, "Kept in project (not stored, or differs from stored copy): %s\n", strings.Join(result.Kept, ", "))
+	}
+	return nil
+}
+
+func runGitignore(stdout io.Writer, opts options, args []string) error {
+	all := false
+	for _, arg := range args {
+		if arg == "--all" {
+			all = true
+		}
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+
+	var files []string
+	if all {
+		for _, env := range p.Resolved.Environments {
+			files = append(files, env.File)
+		}
+	} else {
+		if p.Resolved.Active != "" {
+			files = append(files, p.Resolved.Active)
+		}
+		for _, layer := range layers.Files(p.Location.ProjectPath, p.Resolved.Active) {
+			if layer != p.Resolved.Active {
+				files = append(files, layer)
+			}
+		}
+	}
+
+	// Only warn about files that actually contain plaintext values.
+	var plaintext []string
+	for _, file := range files {
+		full := filepath.Join(p.Location.Dir, filepath.FromSlash(file))
+		if gitignore.HasPlaintext(full) {
+			plaintext = append(plaintext, file)
+		}
+	}
+	notIgnored := gitignore.Check(p.Location.ProjectPath, plaintext)
+	if len(notIgnored) == 0 {
+		if !opts.quiet && !opts.json {
+			fmt.Fprintln(stdout, "All plaintext env files are gitignored.")
+		}
+		if opts.json {
+			return writeJSON(stdout, map[string]any{"notIgnored": []string{}, "added": []string{}})
+		}
+		return nil
+	}
+
+	if opts.dryRun {
+		if opts.json {
+			return writeJSON(stdout, map[string]any{"notIgnored": notIgnored, "added": []string{}})
+		}
+		fmt.Fprintf(stdout, "Would add to .gitignore: %s\n", strings.Join(notIgnored, ", "))
+		return nil
+	}
+
+	added, err := gitignore.Add(p.Location.ProjectPath, notIgnored)
+	if err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(stdout, map[string]any{"notIgnored": notIgnored, "added": added})
+	}
+	if !opts.quiet {
+		fmt.Fprintf(stdout, "Added to .gitignore: %s\n", strings.Join(added, ", "))
 	}
 	return nil
 }
@@ -830,6 +903,7 @@ Storage (env files live outside the project, one folder per branch):
   overview                       List every branch and its environments
   adopt                          Copy .env files from the project into storage (never deletes)
   purge --dry-run | --yes        Delete project copies that are identical to the stored copy
+  gitignore [--all] [--dry-run]  Add env files to .gitignore (active + base, or all with --all)
 
 Environments:
   list, snapshot                 Show environments and variable keys (no values)

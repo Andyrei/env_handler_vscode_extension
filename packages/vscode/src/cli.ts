@@ -76,6 +76,10 @@ export class Envh {
   }
 
   // Storage commands always act on the current branch.
+  gitignore (cwd: string, dryRun: boolean): Promise<{ notIgnored: string[], added: string[] }> {
+    return this.run<{ notIgnored: string[], added: string[] }>(cwd, undefined, ['gitignore', dryRun ? '--dry-run' : '--all'])
+  }
+
   adopt (cwd: string): Promise<AdoptResult> {
     return this.run<AdoptResult>(cwd, undefined, ['adopt'])
   }

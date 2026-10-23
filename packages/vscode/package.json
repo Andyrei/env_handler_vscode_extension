@@ -82,6 +82,12 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "envHandler.addToGitignore",
+        "title": "Add Env Files to .gitignore",
+        "category": "Env Handler",
+        "icon": "$(git-commit)"
+      },
+      {
         "command": "envHandler.switchEnvironment",
         "title": "Switch Active Environment",
         "category": "Env Handler"

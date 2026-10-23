@@ -198,6 +198,28 @@ export class EnvActions {
     }
   }
 
+  // Checks if plaintext env files are gitignored and offers to add them.
+  async addToGitignore (folderPath: string): Promise<void> {
+    if (!this.canEdit()) return
+    try {
+      const preview = await this.envh.gitignore(folderPath, true)
+      if (preview.notIgnored.length === 0) {
+        await vscode.window.showInformationMessage('All plaintext env files are already gitignored.')
+        return
+      }
+      const choice = await vscode.window.showWarningMessage(
+        `These env files with plaintext values are not gitignored:\\n\\n${preview.notIgnored.join('\\n')}\\n\\nAdd them to .gitignore?`,
+        { modal: true },
+        'Add to .gitignore'
+      )
+      if (choice !== 'Add to .gitignore') return
+      const result = await this.envh.gitignore(folderPath, false)
+      await vscode.window.showInformationMessage(`Added to .gitignore: ${result.added.join(', ')}`)
+    } catch (error) {
+      await vscode.window.showErrorMessage(errorMessage(error))
+    }
+  }
+
   // Copies the current branch's project env files into local storage. It never deletes anything.
   async adoptProjectFiles (folderPath: string): Promise<void> {
     if (!this.canEdit()) return
