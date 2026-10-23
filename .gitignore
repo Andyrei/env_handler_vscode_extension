@@ -1,0 +1,17 @@
+node_modules/
+dist/
+packages/*/dist/
+packages/vscode/bin/
+*.vsix
+.DS_Store
+*.log
+coverage/
+envh
+envh.exe
+
+# Local environment files are never part of this project.
+.env
+.env.*
+!.env.example
+
+# Keep metadata visible: .envh.json contains no values.

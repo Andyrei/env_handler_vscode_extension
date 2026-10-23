@@ -1,142 +1,130 @@
 # Env Handler — Standalone `.env` Environment Manager
 
-**Status:** Planned, not started
+**Status:** Phase 0 complete; Phase 1 in progress (parser implemented)
 **Created:** 2026-10-23
 **Updated:** 2026-10-23
 **Repo:** `/Users/andydrei/Documents/MyADHD/running-tools/env_handler_vs_extension`
-**Supersedes:** the earlier plan to patch the `dotenv-vscode` checkout
+**Supersedes:** the earlier JavaScript and `dotenv-vscode` plans
 
 ---
 
 ## 1. Constraints
 
-These are hard requirements:
-
-- **Standalone project.** Build here, in this folder. Do not patch or fork `dotenv-vscode`.
-- **No dotenvx.** No `@dotenvx/dotenvx` dependency, no CLI calls, no decryption through it.
-- **Core CLI + thin VS Code extension.** The core is a standalone Node library/CLI. The extension is a UI and debug/task adapter over it.
+- **Standalone project.** Build here. Do not patch or fork `dotenv-vscode`.
+- **No dotenvx.** No dependency, import, CLI call, or decryption through it.
+- **Secure core.** All `.env` parsing, editing, metadata, layering, running, swapping, importing, and gitignore checks live in Go.
+- **Thin VS Code extension.** The extension is TypeScript because VS Code requires a Node-based extension host. It contains no `.env` parsing or secret-handling logic; it invokes the Go CLI.
 - **Real `.env` files are the source of truth.** No duplicated secret store.
-- **Metadata only in the sidecar.** `.envh.json` contains names, paths, active state, colors, order, and swap state — never values.
+- **Metadata only in `.envh.json`.** Names, paths, active state, colors, order, and swap state. Never values.
 - **Encrypted values are read-only.** Detect `encrypted:`, show a lock, preserve the line, never rewrite or decrypt.
-- **Native runtime.** Our own Node runner loads and layers `.env` files and spawns commands.
+- **Native runtime.** The Go runner loads layers and spawns commands.
 - **Offline.** No network calls, no telemetry.
 
 ---
 
-## 2. What the project is
-
-A Postman-style environment manager for `.env` files:
-
-- Named environments backed by real files: `.env`, `.env.local`, `.env.staging`, `.env.production`.
-- One active environment per project root.
-- A CLI (`envh`) to list, activate, edit, run, export, swap, and import.
-- A thin VS Code extension with an Environments activity-bar panel, status-bar chip, debug integration, and run/swap commands.
-- Base layering: runtime loads `.env` first, then the active environment (for example `.env.local`).
-- Swap mode for single-file apps: `.env` becomes a symlink/copy of the active file, with a backup and restore command.
-
-The official Dotenv extension can stay installed. It continues to provide cloaking, autocomplete, and its custom editor. This project does not contribute a language or editor.
-
----
-
-## 3. Architecture
+## 2. Architecture
 
 ```text
 env_handler_vs_extension/
-├── package.json                    # npm workspaces root
+├── go.mod                          # module env-handler
+├── cmd/envh/main.go                # CLI entry point
+├── internal/
+│   ├── cli/                        # command parsing, dispatch, JSON output
+│   ├── project/                    # project root + sidecar orchestration
+│   ├── discovery/                  # recursive .env discovery
+│   ├── envfile/                    # offset-preserving parser/editor
+│   ├── metadata/                   # .envh.json schema + reconciliation
+│   ├── layers/                     # base + active resolution and merging
+│   ├── runner/                     # os/exec + signal forwarding
+│   ├── swap/                       # symlink/copy, backup, restore
+│   ├── postman/                    # Postman environment import
+│   ├── gitignore/                  # git check-ignore + fallback
+│   ├── shell/                      # export formatting and quoting
+│   ├── jsonapi/                    # DTOs consumed by the extension
+│   ├── fsx/                        # atomic writes, paths, backup naming
+│   ├── errs/                       # typed error codes
+│   └── version/
+├── packages/vscode/
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── src/
+│   │   ├── extension.ts
+│   │   ├── cli.ts                  # spawn Go binary, JSON request/response
+│   │   ├── store.ts
+│   │   ├── tree.ts
+│   │   ├── status.ts
+│   │   ├── commands.ts
+│   │   ├── debug.ts
+│   │   ├── tasks.ts
+│   │   ├── mask.ts
+│   │   └── config.ts
+│   ├── media/icon.svg
+│   ├── bin/                        # generated envh binary, not committed
+│   ├── dist/                       # generated extension bundle, not committed
+│   ├── .vscodeignore
+│   ├── README.md
+│   └── LICENSE
+├── scripts/
+│   ├── build.js                    # go build + esbuild
+│   ├── package.js                  # vsce package
+│   ├── install.js                  # code --install-extension
+│   ├── check-gofmt.js
+│   └── check-no-dotenvx.js
+├── .github/workflows/ci.yml
 ├── README.md
 ├── CHANGELOG.md
 ├── DEVELOPMENT.md
+├── AGENTS.md
 ├── LICENSE
-├── .gitignore
-├── .nvmrc
-├── .github/workflows/ci.yml
-├── scripts/
-│   ├── build.js                    # esbuild: extension + bundled CLI
-│   ├── package.js                  # vsce package
-│   ├── install.js                  # code --install-extension
-│   └── check-no-dotenvx.js         # hard dependency/source guard
-├── packages/
-│   ├── core/                       # @env-handler/core
-│   │   ├── package.json
-│   │   ├── bin/envh.js
-│   │   ├── lib/
-│   │   │   ├── index.js
-│   │   │   ├── discovery.js
-│   │   │   ├── env-vars.js
-│   │   │   ├── metadata.js
-│   │   │   ├── sidecar.js
-│   │   │   ├── layers.js
-│   │   │   ├── runner.js
-│   │   │   ├── swap.js
-│   │   │   ├── postman.js
-│   │   │   ├── gitignore.js
-│   │   │   ├── shell.js
-│   │   │   ├── fsx.js
-│   │   │   ├── paths.js
-│   │   │   └── errors.js
-│   │   └── test/
-│   │       ├── env-vars.test.js
-│   │       ├── metadata.test.js
-│   │       ├── discovery.test.js
-│   │       ├── layers.test.js
-│   │       ├── runner.test.js
-│   │       ├── swap.test.js
-│   │       ├── postman.test.js
-│   │       ├── gitignore.test.js
-│   │       └── cli.test.js
-│   └── vscode/                     # env-handler-vscode
-│       ├── package.json
-│       ├── extension.js
-│       ├── lib/
-│       │   ├── store.js
-│       │   ├── tree-data.js         # pure node builders
-│       │   ├── tree-provider.js
-│       │   ├── status-bar.js
-│       │   ├── commands.js
-│       │   ├── debug-provider.js
-│       │   ├── task-provider.js
-│       │   ├── mask.js
-│       │   └── config.js
-│       ├── media/icon.svg
-│       ├── dist/                    # generated, not committed
-│       ├── .vscodeignore
-│       └── README.md
+└── .gitignore
 ```
 
-Language/runtime choices:
+Language choices:
 
-- Plain JavaScript (CommonJS), Node 22 for development, `standard` for lint.
-- `node:test` for all offline tests.
-- `esbuild` bundles the extension and a bundled `envh` runtime into `packages/vscode/dist`.
-- Core runtime dependencies: `ignore` and `picomatch` only.
-- No `dotenv`, no `dotenvx`. The parser is implemented locally so edits preserve exact offsets.
+- **Go 1.23+** for the core and CLI. Installed development toolchain: Go 1.27.3.
+- **TypeScript** for the VS Code extension, bundled with esbuild.
+- Go tests use `go test ./cmd/... ./internal/...` so Node dependencies are never scanned.
+- Extension type-checking uses `tsc --noEmit`.
+- External Go dependency: `github.com/bmatcuk/doublestar/v4` for glob matching. Everything else is standard library.
+- No Node runtime dependencies in the extension; it ships the Go binary.
+
+---
+
+## 3. Security boundary
+
+The extension never parses or edits `.env` content itself. It calls the CLI and consumes JSON.
+
+```text
+VS Code extension (TypeScript)
+        │  spawn envh ... --json
+        ▼
+Go binary (parsing, editing, metadata, runner, swap)
+        │
+        ▼
+.env / .envh.json on disk
+```
+
+Consequences:
+
+- No secret values cross into the extension unless an explicit reveal action requests them.
+- All formatting-sensitive writes happen in one code path.
+- The CLI is independently testable and usable in terminals and CI.
+- The VSIX bundles the Go binary for the build platform.
 
 ---
 
 ## 4. Data model
 
-### 4.1 Source of truth
+### 4.1 Sidecar — `<project-root>/.envh.json`
 
-```text
-.env
-.env.local
-.env.staging
-.env.production
-```
-
-Each file is an environment. Values live only in these files.
-
-### 4.2 Sidecar — `<project-root>/.envh.json`
-
-```jsonc
+```json
 {
   "version": 1,
   "active": ".env.staging",
   "environments": [
     { "file": ".env", "name": "Default", "color": "gray", "order": 0 },
     { "file": ".env.local", "name": "Local", "color": "green", "order": 1 },
-    { "file": ".env.staging", "name": "Staging", "color": "yellow", "order": 2 },
-    { "file": ".env.production", "name": "Production", "color": "red", "order": 3 }
+    { "file": ".env.staging", "name": "Staging", "color": "yellow", "order": 2 }
   ],
   "swap": {
     "target": ".env.staging",
@@ -149,19 +137,17 @@ Each file is an environment. Values live only in these files.
 
 Rules:
 
-- `swap` is optional and exists only while swap is active.
-- No `hidden` field in v1.
-- No values, no ciphertext, no tokens.
-- Sidecar is safe to commit.
+- No values, ciphertext, or tokens.
+- `swap` is optional and present only while swap is active.
 - Created lazily on the first metadata change.
 - Files discovered on disk but absent from the sidecar appear with defaults.
 - Entries whose files disappear are dropped during reconciliation.
 - Missing `active` falls back to `.env`, then the first environment, with one warning.
-- Corrupt sidecar: report the path, do not overwrite, let the user fix it.
-- Paths are project-relative POSIX paths so nested and monorepo envs work.
-- Swap state is validated on load; a stale target/backup produces a warning, not a write.
+- Corrupt sidecar is reported, never overwritten.
+- Paths are project-relative POSIX paths.
+- No `hidden` field in v1.
 
-### 4.3 Discovery
+### 4.2 Discovery
 
 Default include:
 
@@ -184,86 +170,50 @@ Default exclude:
 **/.envh.json
 ```
 
-Notes:
+`.envrc` is not matched by `**/.env.*`. Symlinked files are included; symlinked directories are skipped to avoid loops.
 
-- `.envrc` is not matched by `**/.env.*` and is therefore excluded naturally.
-- Templates and examples are excluded by default; users can override `include`/`exclude`.
-- Symlinked files are included; symlinked directories are skipped to avoid loops.
-- `node_modules` and `.git` are skipped during traversal.
-- Discovery is project-root scoped. CLI uses `cwd` (or `--cwd`); the extension uses the workspace folder.
+### 4.3 Layering
 
-### 4.4 Layering
-
-For an active file:
-
-1. If the active file is `.env`, load just it.
-2. Otherwise, look for `.env` in the **same directory** as the active file.
-3. Load base `.env` first, then the active file.
+1. Active `.env` → load only it.
+2. Otherwise, load `.env` in the **same directory** as the active file.
+3. Then load the active file.
 4. Later values win.
-5. If swap state is active, load only the swap target; swap bypasses layering.
-6. If no base exists, load only the active file.
-
-Examples:
-
-- `.env.local` at the root → `.env`, `.env.local`.
-- `packages/api/.env.staging` → `packages/api/.env`, `packages/api/.env.staging`.
-- `.env.staging` with swap active → `.env.staging` only.
-
-Precedence:
-
-- **Runner:** file values override the parent process environment by default. `--no-override` makes the parent win.
-- **Debug:** merged file values are applied, then `config.env` is applied last, so explicit launch configuration wins.
-- **Exports:** base + active merged; later wins.
+5. Swap active → load only the swap target; layering is bypassed.
+6. Runner: file values override the parent environment by default; `--no-override` reverses.
+7. Debug: merged file values, then `config.env` wins.
+8. Exports: base + active merged.
 
 ---
 
-## 5. Core library
+## 5. Go packages
 
-### 5.1 Modules
-
-| Module | Responsibility |
+| Package | Responsibility |
 | --- | --- |
-| `env-vars.js` | Pure parser and offset-preserving editor. No filesystem, no VS Code. |
-| `metadata.js` | Pure normalize/merge/reconcile/name/color/order logic. |
-| `sidecar.js` | Read/write `.envh.json`, atomic write, corruption handling. |
-| `discovery.js` | Recursive discovery with include/exclude globs, symlink safety. |
-| `layers.js` | Resolve base + active, merge values, detect encrypted entries. |
-| `runner.js` | Spawn a command with a merged environment; forward signals and exit code. |
-| `swap.js` | Symlink/copy swap, backup, hash validation, restore. |
-| `postman.js` | Parse Postman environment exports (single object or array). |
-| `gitignore.js` | `git check-ignore` when available; pure fallback parser. |
-| `shell.js` | Shell exports, env-file output, quoting, envh command generation. |
-| `fsx.js` | Atomic text write, backup naming, safe rename/delete. |
-| `paths.js` | POSIX/relative path normalization and containment checks. |
-| `errors.js` | Typed errors with codes and safe messages (no values). |
+| `internal/envfile` | Pure offset-preserving parser/editor; no filesystem. |
+| `internal/metadata` | Sidecar schema, normalize, merge, reconcile, names, colors, order. |
+| `internal/discovery` | Recursive walk, include/exclude, symlink safety. |
+| `internal/layers` | Base + active resolution, merge, encrypted detection. |
+| `internal/runner` | Spawn command with merged environment, forward signals and exit code. |
+| `internal/swap` | Symlink/copy swap, backup, hash validation, restore. |
+| `internal/postman` | Postman environment JSON import. |
+| `internal/gitignore` | `git check-ignore` and a conservative fallback matcher. |
+| `internal/shell` | Shell exports, env-file output, quoting, command generation. |
+| `internal/fsx` | Atomic text writes, backup names, safe rename/delete. |
+| `internal/project` | Orchestrates discovery + metadata + layers into snapshots. |
+| `internal/jsonapi` | Stable JSON DTOs for the extension. |
+| `internal/cli` | Command dispatch, terminal output, JSON output, exit codes. |
 
-### 5.2 Public API (indicative)
-
-```js
-const envh = require('@env-handler/core')
-
-await envh.init(root)
-const snapshot = await envh.snapshot(root)
-await envh.use(root, 'staging')
-await envh.create(root, 'Local', { activate: true })
-await envh.setValue(root, '.env.local', 'API_URL', 'http://localhost:3000')
-await envh.run(root, { env: '.env.local', command: 'node', args: ['app.js'] })
-await envh.exportEnv(root, { env: '.env.local', format: 'shell' })
-await envh.swap(root, { env: '.env.local' })
-await envh.restore(root)
-await envh.importPostman(root, json, { activate: true })
-```
-
-The API accepts absolute project roots and uses Node `fs` internally. The extension runs in the workspace extension host, so local and remote workspaces are supported; virtual filesystems are declared unsupported.
+Pure logic stays separate from filesystem and process code.
 
 ---
 
-## 6. Core CLI — `envh`
+## 6. CLI contract
 
 Global flags: `--cwd <dir>`, `--json`, `--quiet`, `--help`, `--version`.
 
 ```sh
 envh init
+envh snapshot [--json]
 envh list [--json]
 envh status
 envh use <name|file>
@@ -274,39 +224,56 @@ envh duplicate <env> [--name <name>]
 envh remove <env> [--delete-file --yes]
 
 envh vars [env] [--reveal] [--json]
-envh set <env> <key> <value>
-envh unset <env> <key>
-envh rename-var <env> <old> <new>
+envh value <env> <key> [--reveal] [--json]
+envh set <env> <key> <value> [--json]
+envh unset <env> <key> [--json]
+envh rename-var <env> <old> <new> [--json]
 
+envh resolve [--env <name|file>] [--no-base] [--skip-encrypted] [--json]
 envh run [--env <name|file>] [--no-base] [--no-override] [--quiet] -- <command ...>
 envh export [--env <env>] [--no-base] [--format shell|json|env]
 
 envh swap [--env <env>] [--copy] [--force]
 envh restore [--force]
-
 envh import postman <file> [--name <name>] [--force] [--activate] [--skip-disabled]
 envh gitignore [--all] [--dry-run]
 envh doctor [--json]
 ```
 
-Behavior:
+### 6.1 Snapshot JSON (no values)
 
-- `list` prints active marker, display name, relative file, variable count, encrypted count. Never values.
-- `use` accepts display name, filename, or relative path; ambiguous names error with choices.
-- `create` writes an empty file by default; `--template` seeds lines. It warns if the file is not gitignored.
-- `remove` removes metadata only by default; `--delete-file --yes` moves the file to trash.
-- `vars` masks values by default; `--reveal` prints them explicitly.
-- `set`/`unset`/`rename-var` preserve comments, blank lines, quoting, `export` prefixes, CRLF, and trailing newlines.
-- Encrypted entries are read-only: edits fail with a clear error.
-- `run` loads layers, warns about encrypted values, spawns the command with inherited stdio, forwards signals, and exits with the child’s code. `--no-override` keeps parent environment values.
-- `export` writes shell exports, JSON, or env-file output. It prints values by definition and warns on stderr.
-- `swap` backs up `.env`, creates a relative symlink to the active file, or copies when `--copy`/Windows fallback applies. It warns that layering is bypassed.
-- `restore` removes the generated `.env` after hash validation and restores the backup.
-- `import postman` supports one environment or an array, comments out disabled values by default, sanitizes keys, warns about plaintext secrets, and creates a sidecar entry.
-- `gitignore` appends specific files or all env files with `--all`; `--dry-run` prints the lines.
-- `doctor` checks sidecar validity, active file existence, layers, gitignore coverage, encrypted counts, and swap state. It never prints values.
+```json
+{
+  "root": "/project",
+  "sidecar": ".envh.json",
+  "active": ".env.local",
+  "environments": [
+    {
+      "file": ".env.local",
+      "name": "Local",
+      "color": "green",
+      "order": 1,
+      "active": true,
+      "swapped": false,
+      "layers": [".env", ".env.local"],
+      "variables": [
+        { "key": "API_URL", "line": 2, "encrypted": false, "multiline": false },
+        { "key": "TOKEN", "line": 3, "encrypted": true, "multiline": false }
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
 
-Exit codes:
+### 6.2 Other JSON
+
+- `envh value ... --reveal --json` → `{ "key": "...", "value": "..." }`.
+- `envh resolve --json` → `{ "environment": ".env.local", "layers": [...], "values": { ... } }`.
+- Mutations return `{ "ok": true, ... }` plus the refreshed snapshot when `--json`.
+- Errors return `{ "ok": false, "code": "ENV_NOT_FOUND", "message": "..." }` on stderr; never values.
+
+### 6.3 Exit codes
 
 - `0` success
 - `1` usage error
@@ -315,57 +282,73 @@ Exit codes:
 - `4` refused unsafe operation (encrypted edit, swap conflict, existing backup)
 - `5` command failed
 
+### 6.4 Behavior
+
+- `list` prints active marker, display name, relative file, variable count, encrypted count. Never values.
+- `use` accepts display name, filename, or relative path.
+- `create` writes an empty file by default; `--template` seeds lines.
+- `remove` removes metadata only by default; `--delete-file --yes` deletes.
+- `vars` masks by default; `--reveal` prints values explicitly.
+- Edits preserve comments, blank lines, quoting, `export` prefixes, CRLF, BOM, and trailing newlines.
+- Encrypted entries reject edits, renames, and deletes.
+- `resolve` is the debug/env-injection path; it prints values only when explicitly requested (or `--json`), and skips encrypted keys with `--skip-encrypted`.
+- `run` loads layers, warns about encrypted values, inherits stdio, forwards signals, and exits with the child code.
+- `swap` backs up `.env`, creates a relative symlink or a copy, and warns that layering is bypassed.
+- `restore` validates the generated file/hash and restores the backup.
+- `import postman` supports one environment or an array, comments out disabled values by default, sanitizes keys, warns about plaintext, and writes metadata.
+- `gitignore` appends specific files or all env files; `--dry-run` prints only.
+- `doctor` reports sidecar validity, active file, layers, gitignore coverage, encrypted counts, and swap state.
+
 ---
 
 ## 7. VS Code extension
 
 ### 7.1 Scope
 
-The extension is a thin client. It adds:
+Adds:
 
 - Activity-bar container **Environments** (`envHandler`), view `envHandler.tree`.
 - Folder → environment → variable tree.
-- Active environment marker and click-to-activate.
+- Active marker and click-to-activate.
 - Masked values with transient reveal.
-- Encrypted values shown as 🔒 and read-only.
-- Create/rename/duplicate/delete environments; rename files; set color; reorder.
-- Add/edit/rename/delete variables with format preservation.
+- Encrypted lock, read-only.
+- Environment and variable CRUD.
+- Color and order controls.
 - Filter, refresh, empty states.
-- Status-bar chip scoped to the active editor’s workspace folder.
+- Multi-root support with one active environment per folder.
+- Status-bar chip scoped to the active editor’s folder.
 - Debug env injection.
-- Run-with-environment and task provider.
+- Run/task integration.
 - Swap/restore.
 - Postman import.
 - Gitignore guard.
 
-It does **not** contribute a language, custom editor, cloaking, autocomplete, or syntax highlighting. The official Dotenv extension can remain installed.
+Does **not** add: language, custom editor, cloaking, autocomplete, syntax highlighting.
 
-### 7.2 Tree
+### 7.2 CLI client
 
-```text
-ENVIRONMENTS                                  +  ⚲  ⟳  ⋯
-▾ api-service
-   ● Local              ACTIVE      14 vars
-   ○ Staging                         14 vars
-   ○ Production                       9 vars  🔒 2
-     DATABASE_URL       ████████████   ⤢  ✎  ⧉
-     PORT               3000           ⤢  ✎  ⧉
-▾ web-app
-   ○ Development                      6 vars
-```
+`src/cli.ts`:
 
-Details:
+- Resolves `bin/envh` or `bin/envh.exe` from the extension directory.
+- Spawns with `execFile` (no shell).
+- Passes `--json` and parses stdout.
+- Captures stderr; never logs values.
+- Applies timeouts to snapshot calls and a longer/no timeout to `run`.
+- Surfaces typed errors to user-facing messages.
+
+### 7.3 Tree
 
 - Single workspace folder → flat environment list.
-- Multi-root workspace → folder nodes, independent active environment per folder.
-- Environment item: colored circle icon, display name, `ACTIVE`, variable count, encrypted count, `SWAPPED` when applicable.
-- Clicking an environment activates it. The twisty expands variables.
-- Variable item: key, masked value, lock for encrypted entries.
-- Mask character `envHandler.maskIcon`, capped at `envHandler.maskLength` characters.
-- Reveal is transient and clears on refresh/activation change.
-- Empty states: no folder open, no environments found, filter returned nothing.
+- Multi-root → folder nodes, independent active state.
+- Environment item: color icon, name, `ACTIVE`, variable count, encrypted count, `SWAPPED`.
+- Click activates; twisty expands variables.
+- Variable: key, masked value, encrypted lock.
+- Mask character/length from settings.
+- Reveal calls `envh value ... --reveal --json` and clears on refresh.
+- Dirty open document → abort mutation and ask to save.
+- External changes → watchers refresh snapshot.
 
-### 7.3 Commands
+### 7.4 Commands
 
 ```text
 envHandler.refresh
@@ -402,214 +385,175 @@ envHandler.importPostman
 envHandler.addToGitignore
 ```
 
-Menus:
+### 7.5 Settings
 
-- `view/title`: create, filter, refresh, more.
-- Environment inline: set active, add variable, reveal file.
-- Environment context: rename, rename file, duplicate, delete, color, move up/down, copy exports, copy run command, open metadata.
-- Variable inline: edit, reveal, copy.
-- Variable context: rename, delete.
-- Folder context: create environment, reveal folder, open metadata.
-- Context-only commands hidden from the command palette unless also useful globally.
+| Key | Type | Default |
+| --- | --- | --- |
+| `envHandler.applyToDebug` | boolean | `false` |
+| `envHandler.terminalMode` | enum | `none` |
+| `envHandler.maskValues` | boolean | `true` |
+| `envHandler.maskIcon` | string | `█` |
+| `envHandler.maskLength` | number | `32` |
+| `envHandler.defaultTemplate` | string[] | `[]` |
+| `envHandler.include` | string[] | `["**/.env","**/.env.*"]` |
+| `envHandler.exclude` | string[] | discovery exclusions |
+| `envHandler.debugTypes` | string[] | common runtime types |
+| `envHandler.runCommand` | string | `""` |
+| `envHandler.layerBase` | boolean | `true` |
+| `envHandler.showStatusBar` | boolean | `true` |
+| `envHandler.confirmSwap` | boolean | `true` |
 
-### 7.4 Settings
+`terminalMode`: `none` | `task` | `swap`.
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `envHandler.applyToDebug` | boolean | `false` | Inject active environment into debug sessions |
-| `envHandler.terminalMode` | enum | `none` | `none`, `task`, `swap` |
-| `envHandler.maskValues` | boolean | `true` | Mask values in the panel |
-| `envHandler.maskIcon` | string | `█` | Mask character |
-| `envHandler.maskLength` | number | `32` | Maximum mask length |
-| `envHandler.defaultTemplate` | string[] | `[]` | Lines seeded into new environments |
-| `envHandler.include` | string[] | `["**/.env","**/.env.*"]` | Discovery include |
-| `envHandler.exclude` | string[] | see discovery | Discovery exclude |
-| `envHandler.debugTypes` | string[] | common runtime types | Debug types eligible for env injection |
-| `envHandler.runCommand` | string | `""` | Default command for run/task |
-| `envHandler.layerBase` | boolean | `true` | Load base `.env` before the active file |
-| `envHandler.showStatusBar` | boolean | `true` | Show the active-environment chip |
-| `envHandler.confirmSwap` | boolean | `true` | Confirm before replacing `.env` |
+### 7.6 Debug
 
-### 7.5 Debug integration
-
-- Registers a `DebugConfigurationProvider` for a broad set of runtime debug types; the setting filters which ones are modified.
-- Loads base + active, merges values, and injects `config.env`.
-- Applies `config.env` last, so explicit launch configuration wins.
-- Removes a managed `envFile` reference to avoid stale loading; leaves custom `envFile` paths alone.
-- Skips encrypted values and warns once.
+- `DebugConfigurationProvider` for common runtime types, filtered by `envHandler.debugTypes`.
+- Calls `envh resolve --env <file> --json --skip-encrypted`.
+- Injects `config.env`; explicit `config.env` wins.
+- Removes a managed `envFile` reference; leaves custom paths alone.
 - Never edits `launch.json`.
 - Disabled in untrusted workspaces.
-- Default is off; the user enables it explicitly.
+- Default off.
 
-### 7.6 Run/task integration
+### 7.7 Run/task
 
-- `envHandler.runWithEnvironment` picks an environment, prompts for a command if `runCommand` is empty, and executes the bundled `envh run --env <file> -- <command>` in a VS Code task/terminal.
-- `terminalMode: task` registers a task provider of type `envh` and exposes tasks for environments with a configured command.
-- `terminalMode: none` shows an informational message instead of running.
-- `terminalMode: swap` activates swap behavior on active-environment changes.
-- The bundled runtime is `dist/envh.js`, so no global CLI install is required for the extension.
+- `envHandler.runWithEnvironment` prompts for an environment and command.
+- Executes the bundled `envh run --env <file> -- <command>` in a VS Code task/terminal.
+- `terminalMode: task` registers an `envh` task provider.
+- `terminalMode: none` shows guidance instead.
+- `terminalMode: swap` controls swap behavior instead.
+- No global CLI install required.
 
-### 7.7 Swap
+### 7.8 Swap
 
-- Opt-in via `terminalMode: swap` plus confirmation.
-- Backs up an existing `.env` to `.env.backup.<timestamp>`.
-- Creates a relative symlink `.env` → active file; on Windows/EPERM, copies the active file instead and stores a content hash.
-- Stores swap state in `.envh.json`.
-- Hides the generated `.env` from the tree while swap is active and marks the target as `SWAPPED`.
-- Warns that base layering is bypassed and that a tracked `.env` will show a git change.
-- `envHandler.restoreSwap` removes the generated file after hash validation and restores the backup.
+- Opt-in, confirmed, backed up.
+- Symlink with copy fallback; content hash for copies.
+- State in `.envh.json`; target marked `SWAPPED`.
+- Warns about layering bypass and tracked `.env` changes.
+- Restore validates and restores.
 - Switching away from swap mode prompts to restore.
-- The extension does not auto-restore on deactivate.
-
-### 7.8 Postman import
-
-- Opens a JSON file; accepts a single environment or an array.
-- Maps `name`, `values`, `enabled`, and `type`.
-- Creates `.env.<slug>` and a metadata entry.
-- Disabled values are written as comments by default; `--skip-disabled` skips them in the CLI.
-- Invalid keys are reported; values are not printed.
-- Warns that Postman secrets become plaintext at rest and runs the gitignore guard.
-- Optionally activates the imported environment.
+- No auto-restore on deactivate.
 
 ### 7.9 Gitignore guard
 
-- Checks layers with `git check-ignore` when inside a trusted git repo.
-- Falls back to a pure `.gitignore` matcher (including negation and nested files) when git is unavailable or the workspace is untrusted.
+- Uses `git check-ignore` for trusted repos.
+- Conservative fallback when git is unavailable/untrusted.
 - Warns on create/activate/import when a plaintext layer is not ignored.
-- Offers “Add this file”, “Add all env files”, and “Not now”.
-- Never appends automatically.
-- Remembers dismissal per file per session.
+- Offers add-this, add-all, or not-now; never appends automatically.
 
 ---
 
-## 8. Format-preserving variable editor
+## 8. Format-preserving parser
 
-Parser output per entry:
+Entry model:
 
-```js
-{
-  key,
-  value,        // decoded
-  raw,          // exact source value
-  quote,        // '"' | "'" | '`' | null
-  start,        // value start offset
-  end,          // value end offset
-  keyStart,
-  keyEnd,
-  line,
-  index,
-  encrypted
+```go
+type Entry struct {
+    Key       string
+    Value     string
+    Raw       string
+    Quote     byte
+    KeyStart  int
+    KeyEnd    int
+    Start     int
+    End       int
+    Line      int
+    Index     int
+    Encrypted bool
+    Multiline bool
 }
 ```
 
 Rules:
 
-- Ignore comments (`# ...`) and blank lines.
-- Support `KEY=value`, `KEY: value`, `export KEY=value`, quoted, unquoted, and multiline quoted values.
-- Support CRLF and preserve it.
-- Preserve BOM.
-- Support duplicate keys; edit targets a specific occurrence and shows its line number.
-- Preserve inline comments when changing a value.
-- Preserve `export` and spacing when renaming a key.
-- Add/remove whole lines; keep surrounding comments and blank lines.
-- Remove the correct newline at EOF.
-- Detect `encrypted:` and mark the entry read-only.
-- Route multiline value edits to “Open in Editor” instead of an input box.
-- Abort writes when the document is dirty; ask the user to save first.
-- Apply edits through `WorkspaceEdit` when the file is open, otherwise atomic file write.
+- Ignore comments and blank lines.
+- Support `KEY=value`, `KEY: value`, `export KEY=value`, quoted/unquoted/multiline.
+- Preserve CRLF, BOM, export prefix, spacing, inline comments, and trailing newline.
+- Duplicate keys edit a specific occurrence by line/index.
+- Add/remove whole lines with surrounding blank-line handling.
+- `encrypted:` entries are read-only.
+- Multiline edits use “Open in Editor”.
+- Dirty documents abort writes.
 
 ---
 
 ## 9. Testing
 
-All core tests are offline and do not download VS Code.
+Go:
 
 ```text
-packages/core/test/
-  env-vars.test.js      # quoting, comments, CRLF, BOM, export, colon, duplicates
-  metadata.test.js      # defaults, merge, reconcile, active fallback, swap state
-  discovery.test.js     # include/exclude, nested dirs, symlinks, skipped dirs
-  layers.test.js        # base resolution, precedence, swap bypass
-  runner.test.js        # env merge, override rules, exit code, signals
-  swap.test.js          # symlink, copy fallback, backup, restore, conflicts
-  postman.test.js       # single/array, disabled values, secrets, invalid keys
-  gitignore.test.js     # roots, negations, nested files, non-git fallback
-  cli.test.js           # init/list/use/run/export/import in temp projects
+internal/envfile/*_test.go
+internal/metadata/*_test.go
+internal/discovery/*_test.go
+internal/layers/*_test.go
+internal/runner/*_test.go
+internal/swap/*_test.go
+internal/postman/*_test.go
+internal/gitignore/*_test.go
+internal/cli/*_test.go
 ```
 
-Extension-side pure helpers (no `vscode` import):
+- Temporary directories only.
+- Offline.
+- CLI integration tests invoke the built test binary or `go run`.
+- Encrypted entries, formatting, swap conflicts, and JSON contracts are covered.
 
-```text
-packages/vscode/test/unit/
-  tree-data.test.js
-  debug-config.test.js
-  mask.test.js
-```
+Extension:
 
-CI runs:
+- `tsc --noEmit` must pass.
+- Pure helpers may be tested with Node once they exist.
+- Manual panel/debug/swap checklist per phase.
+
+CI:
 
 ```sh
-npm run lint
+go vet ./cmd/... ./internal/...
+gofmt -l cmd internal # must be empty
+go test ./cmd/... ./internal/...
+npm ci
+npm run lint:ts
+npm run lint:scripts
 npm run check:no-dotenvx
-npm test
 npm run build
 ```
-
-No network access is required except `npm ci`.
 
 ---
 
 ## 10. Build phases
 
-### Phase 0 — Scaffold (~1 session)
+### Phase 0 — Scaffold and language pivot (complete)
 
-- npm workspaces, core and extension manifests.
-- LICENSE, .gitignore, .nvmrc, README skeleton, CHANGELOG, DEVELOPMENT.
-- Activity-bar icon.
-- `scripts/build.js`, `scripts/package.js`, `scripts/install.js`.
-- `scripts/check-no-dotenvx.js` and CI workflow.
-- Minimal extension activation and CLI help.
+- Go module, CLI help/version, Go test.
+- TypeScript extension shell with version command.
+- Root npm scripts, esbuild build, VSIX package/install.
+- No-dotenvx guard, gofmt guard, CI.
+- Activity-bar icon asset and extension manifest.
 
-Acceptance: `npm install`, `npx standard`, `npm test`, `npm run check:no-dotenvx`, and `npm run build` pass.
+Acceptance: `go test ./cmd/... ./internal/...`, `go vet ./cmd/... ./internal/...`, `gofmt -l cmd internal` empty, `npm install`, `npm run lint`, `npm run check:no-dotenvx`, and `npm run build` pass.
 
-### Phase 1 — Core read path
+### Phase 1 — Go read path (in progress)
 
-- `env-vars.js` parser and tests.
-- `metadata.js`, `sidecar.js`, `discovery.js`, `layers.js` and tests.
-- CLI `init`, `list`, `status`, `use`, `vars`.
-- `.envh.json` read/write, active fallback, reconciliation.
+- `envfile` parser + tests. **Done.**
+- `metadata`, `discovery`, `layers`, `project` snapshot.
+- CLI `init`, `snapshot`, `list`, `status`, `use`, `vars`, `value`.
+- Sidecar read/write, active fallback, reconciliation.
 
-Acceptance: activate persists across CLI runs; multi-directory envs resolve correctly; metadata contains no values.
+### Phase 2 — Go write/runtime path
 
-### Phase 2 — Core write/runtime path
-
-- Variable edits, environment CRUD, rename/duplicate/delete.
-- `runner.js`, `shell.js`, `swap.js`, `postman.js`, `gitignore.js`.
-- CLI `create`, `rename`, `rename-file`, `duplicate`, `remove`, `set`, `unset`, `rename-var`, `run`, `export`, `swap`, `restore`, `import`, `gitignore`, `doctor`.
-- Tests for each.
-
-Acceptance: `envh run` loads base + active; swap backs up and restores; Postman import produces a working env and metadata; all formatting tests pass.
+- Variable edits and environment CRUD.
+- Runner, exports, swap/restore, Postman import, gitignore.
+- CLI `create`, `rename`, `rename-file`, `duplicate`, `remove`, `set`, `unset`, `rename-var`, `resolve`, `run`, `export`, `swap`, `restore`, `import`, `gitignore`, `doctor`.
 
 ### Phase 3 — Extension panel
 
-- `store.js`, tree data/provider, status bar, masking, watchers.
-- Create/rename/duplicate/delete env and variable commands.
-- Filter, empty states, metadata open.
-- Multi-root grouping and active folder selection.
-
-Acceptance: create/activate/edit in the panel; reload preserves active; a second workspace folder is independent; external file changes appear live; values are masked by default.
+- CLI client, store, tree, status bar, masking, watchers.
+- Environment/variable commands.
+- Filter, empty states, multi-root.
 
 ### Phase 4 — Extension runtime + docs
 
-- Debug provider.
-- Run/task provider.
-- Swap UI and restore.
-- Postman import UI.
-- Gitignore guard UI.
-- README, CHANGELOG, DEVELOPMENT.
-- VSIX build, install, reload, manual checklist.
-
-Acceptance: F5 uses base + active; explicit `config.env` wins; swap/restore works; import works; packaged VSIX installs over nothing and reloads cleanly.
+- Debug provider, run/task, swap UI, Postman UI, gitignore guard.
+- README, CHANGELOG, DEVELOPMENT, manual checklist, VSIX install/reload.
 
 ---
 
@@ -618,57 +562,55 @@ Acceptance: F5 uses base + active; explicit `config.env` wins; swap/restore work
 ```sh
 cd /Users/andydrei/Documents/MyADHD/running-tools/env_handler_vs_extension
 
+go test ./cmd/... ./internal/...
+go vet ./cmd/... ./internal/...
+gofmt -l cmd internal
+
 npm install
-npx standard
-npm test
+npm run lint
 npm run check:no-dotenvx
+npm test
 npm run build
 npm run package:vsix
-code --install-extension dist/env-handler-vscode-0.1.0.vsix --force
+npm run install:vsix
 ```
 
-Then **Developer: Reload Window** and open a temp project with:
-
-```text
-.env
-.env.local
-.env.staging
-```
+Then run **Developer: Reload Window**.
 
 Manual checklist:
 
-- The Environments icon appears.
-- Environments are discovered and metadata is created lazily.
-- Activating Local persists after reload.
-- A second workspace folder has its own active environment.
-- Values are masked; reveal is transient.
-- Add/edit/rename/delete preserves comments, blank lines, quoting, CRLF.
-- Encrypted entries are locked and read-only.
+- Environments icon/command appears.
+- Snapshot has no values.
+- Activating persists across reloads.
+- Multi-root folders are independent.
+- Masking and transient reveal work.
+- Edits preserve formatting.
+- Encrypted entries are locked.
 - F5 injects base + active when enabled.
-- Run with Environment executes the native runner.
-- Swap backs up, symlinks/copies, and restores.
-- Postman import creates a file and metadata.
-- Gitignore warning offers a one-click fix.
+- Run uses the bundled Go binary.
+- Swap backs up and restores.
+- Postman import creates a file + metadata.
+- Gitignore warning offers a fix.
 - No dotenvx dependency exists.
 
 ---
 
-## 12. Risks and mitigations
+## 12. Risks
 
 | Risk | Mitigation |
 | --- | --- |
-| Parser edge cases (multiline, duplicates, CRLF) | Offset-preserving parser plus dedicated unit tests. |
-| Runner cross-platform behavior | Spawn via Node; Windows shell handling; `--copy` swap tests. |
-| Swap damaging a tracked `.env` | Opt-in, confirmation, timestamped backup, hash validation, restore command. |
-| Base layering vs swap | Swap explicitly bypasses layering and warns. |
-| Debug providers per type | Static broad registration plus `debugTypes` filter; no launch.json writes. |
-| Encrypted values | Read-only detection; no decrypt; runner warns; debug skips. |
-| Sidecar drift | Reconcile on read; watcher refresh; corrupt file is never overwritten. |
-| Dirty editor vs panel edits | Display dirty text; abort writes and ask to save. |
-| Gitignore coverage | git CLI when trusted; pure fallback; explicit user action only. |
-| Virtual workspaces | Declared unsupported; `extensionKind: ["workspace"]`; clear message. |
-| Coexistence with official Dotenv extension | No language/editor contributions; panel-only extension. |
-| Accidental dotenvx reintroduction | `check:no-dotenvx` scans manifests, lockfile, and source imports in CI. |
+| Go binary platform mismatch in VSIX | Build for the current platform in Phase 0; release matrix later. |
+| Parser edge cases | Offset-preserving Go parser + extensive tests. |
+| Runner cross-platform | `os/exec`, Windows shell handling, signal forwarding tests. |
+| Swap damage | Opt-in, confirm, timestamped backup, hash validation, restore. |
+| Layering vs swap | Swap explicitly bypasses and warns. |
+| Debug provider coverage | Broad registration + `debugTypes` filter + no launch.json writes. |
+| Encrypted values | Read-only detection; never decrypt; debug skips; runner warns. |
+| Sidecar drift | Reconcile on read; watcher refresh; never overwrite corrupt file. |
+| Dirty editor | Abort mutations and ask to save. |
+| Virtual workspaces | Declared unsupported; workspace extension kind. |
+| dotenvx reintroduction | CI guard scans Go, TS, manifests, and lockfile. |
+| Extension/CLI drift | JSON DTOs in `internal/jsonapi`; contract tests. |
 
 ---
 
@@ -676,30 +618,32 @@ Manual checklist:
 
 | Decision | Choice |
 | --- | --- |
-| Project shape | Standalone monorepo: core CLI/library + thin VS Code extension |
-| Location | `/Users/andydrei/Documents/MyADHD/running-tools/env_handler_vs_extension` |
+| Core language | **Go** |
+| Extension language | **TypeScript** |
+| Project shape | Standalone monorepo: Go CLI/library + thin extension |
+| Location | Current folder |
 | dotenvx | Prohibited |
 | dotenv-vscode fork | Not used |
-| Metadata | `.envh.json` in project root, no values |
-| Active runtime | Native Node runner; no external binary |
-| Debug | Opt-in `DebugConfigurationProvider`, default off |
-| Encrypted values | Detected, read-only, never decrypted |
-| Layering | Base `.env` in same directory + active; swap bypasses |
-| Runner precedence | File values override parent env by default; `--no-override` |
-| Swap | Symlink, Windows copy fallback, backup/restore, opt-in |
-| Discovery | `.env` + `.env.*`; exclude examples/templates/keys/vault |
-| New env template | Empty by default |
+| Metadata | `.envh.json`, no values |
+| Runtime | Go runner |
+| Debug | Opt-in provider, default off |
+| Encrypted values | Read-only, no decryption |
+| Layering | Base `.env` same directory + active; swap bypasses |
+| Runner precedence | File values override parent env by default |
+| Sidecar path | Project root |
 | Version | `0.1.0` |
-| Language | Plain JavaScript (CommonJS) |
+| Node in extension | Node 18+; no runtime npm dependencies |
+| Go | 1.23+ |
 
 ---
 
 ## 14. Out of scope for v1
 
-- Decryption of `encrypted:` values.
-- A custom `.env` editor, cloaking, autocomplete, or syntax highlighting.
+- Decryption.
+- Custom editor/cloaking/autocomplete/syntax highlighting.
 - Virtual workspace support.
-- Cloud sync, telemetry, or network calls.
-- Importing Postman collections (only environments).
-- Drag-and-drop reordering (move up/down commands instead).
+- Cloud sync/telemetry/network calls.
+- Postman collections (environments only).
+- Drag-and-drop ordering.
 - Multiple sidecars per workspace folder.
+- Cross-platform VSIX matrix (current platform first).

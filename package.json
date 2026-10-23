@@ -1,0 +1,42 @@
+{
+  "name": "env-handler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone environment manager for .env files: Go core CLI and thin VS Code extension.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "workspaces": [
+    "packages/vscode"
+  ],
+  "scripts": {
+    "test": "go test ./cmd/... ./internal/...",
+    "test:go": "go test ./cmd/... ./internal/...",
+    "lint": "npm run lint:go && npm run lint:ts && npm run lint:scripts",
+    "lint:go": "go vet ./cmd/... ./internal/... && node scripts/check-gofmt.js",
+    "lint:ts": "tsc -p packages/vscode/tsconfig.json --noEmit",
+    "lint:scripts": "standard \"scripts/**/*.js\"",
+    "build": "node scripts/build.js",
+    "package:vsix": "npm run build && node scripts/package.js",
+    "install:vsix": "node scripts/install.js",
+    "check:no-dotenvx": "node scripts/check-no-dotenvx.js",
+    "verify": "npm run lint && npm run check:no-dotenvx && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "standard": "^17.1.2",
+    "typescript": "^5.9.0"
+  },
+  "standard": {
+    "ignore": [
+      "**/dist/**",
+      "**/bin/**",
+      "**/node_modules/**",
+      "*.vsix"
+    ]
+  }
+}

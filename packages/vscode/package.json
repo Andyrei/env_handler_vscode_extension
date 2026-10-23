@@ -1,0 +1,49 @@
+{
+  "name": "env-handler-vscode",
+  "displayName": "Env Handler",
+  "description": "Manage named .env environments from VS Code.",
+  "version": "0.1.0",
+  "publisher": "env-handler",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "env",
+    "dotenv",
+    "environment",
+    "secrets"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Env Handler is read-only in untrusted workspaces."
+    }
+  },
+  "activationEvents": [
+    "onCommand:envHandler.showVersion"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "envHandler.showVersion",
+        "title": "Env Handler: Show Version"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "envHandler.showVersion"
+        }
+      ]
+    }
+  }
+}
