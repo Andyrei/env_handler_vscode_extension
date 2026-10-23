@@ -73,7 +73,7 @@ export class EnvActions {
       'Delete'
     )
     if (choice !== 'Delete') return
-    await this.run(folderPath, env, () => this.envh.remove(scopeOf(folderPath, env), env.file), `Deleted ${env.name}`)
+    await this.run(folderPath, env, () => this.envh.remove(scopeOf(folderPath, env), env.file), `Moved ${env.name} to trash`)
   }
 
   async addVariable (folderPath: string, env: Environment): Promise<void> {
@@ -118,7 +118,7 @@ export class EnvActions {
       await vscode.window.showInformationMessage('Encrypted values are read-only here. Edit the file directly.')
       return
     }
-    const choice = await vscode.window.showWarningMessage(`Delete ${key} from ${env.name}?`, { modal: true }, 'Delete')
+    const choice = await vscode.window.showWarningMessage(`Delete ${key} from ${env.name}? (moved to trash)`, { modal: true }, 'Delete')
     if (choice !== 'Delete') return
     await this.run(folderPath, env, () => this.envh.unset(scopeOf(folderPath, env), env.file, key), `Deleted ${key}`)
   }

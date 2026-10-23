@@ -84,6 +84,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		runErr = runDuplicate(stdout, opts, rest)
 	case "remove":
 		runErr = runRemove(stdout, opts, rest)
+	case "restore":
+		runErr = runRestore(stdout, opts, rest)
+	case "trash":
+		runErr = runTrash(stdout, opts, rest)
 	case "color":
 		runErr = runColor(stdout, opts, rest)
 	case "move":
@@ -520,6 +524,61 @@ func runRemove(stdout io.Writer, opts options, args []string) error {
 	return report(stdout, opts, p, fmt.Sprintf("Deleted %s (%s)", env.Name, env.File))
 }
 
+func runRestore(stdout io.Writer, opts options, args []string) error {
+	if len(args) != 1 {
+		return usageErr("restore requires <file>")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	if err := p.Restore(args[0]); err != nil {
+		return err
+	}
+	return report(stdout, opts, p, fmt.Sprintf("Restored %s", args[0]))
+}
+
+func runTrash(stdout io.Writer, opts options, args []string) error {
+	if len(args) == 0 || (len(args) == 1 && args[0] != "list" && args[0] != "empty") {
+		return usageErr("trash requires: list | empty")
+	}
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		files, err := p.ListTrash()
+		if err != nil {
+			return err
+		}
+		if opts.json {
+			return writeJSON(stdout, map[string]any{"files": orEmpty(files)})
+		}
+		if len(files) == 0 {
+			fmt.Fprintln(stdout, "Trash is empty.")
+			return nil
+		}
+		for _, f := range files {
+			fmt.Fprintf(stdout, "%s\n", f)
+		}
+		return nil
+	case "empty":
+		if !opts.yes {
+			return usageErr("empty permanently removes trashed files; pass --yes to confirm")
+		}
+		count, err := p.EmptyTrash()
+		if err != nil {
+			return err
+		}
+		if !opts.quiet {
+			fmt.Fprintf(stdout, "Removed %d file(s) from trash.\n", count)
+		}
+		return nil
+	}
+	return usageErr("trash requires: list | empty")
+}
+
 func runColor(stdout io.Writer, opts options, args []string) error {
 	if len(args) != 2 {
 		return usageErr("color requires <env> <color>")
@@ -779,7 +838,10 @@ Environments:
   rename <env> <name>            Change the display name
   rename-file <env> <file>       Rename the file on disk (.env.<name>)
   duplicate <env> [--name <n>]   Copy an environment to a new file
-  remove <env> --yes             Delete an environment file
+  remove <env> --yes             Move an environment file to trash
+  restore <file>                 Restore a file from trash
+  trash list                     List trashed files
+  trash empty --yes              Permanently remove trashed files
   color <env> <color>            gray, green, yellow, red, blue, purple, orange
   move <env> up|down             Change the order in the list
 

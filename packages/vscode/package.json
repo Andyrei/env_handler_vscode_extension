@@ -114,7 +114,7 @@
       },
       {
         "command": "envHandler.deleteEnvironment",
-        "title": "Delete",
+        "title": "Delete (moves to trash)",
         "category": "Env Handler"
       },
       {

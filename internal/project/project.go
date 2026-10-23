@@ -199,13 +199,13 @@ func (p *Project) Duplicate(selector, name string) (metadata.Environment, error)
 	return p.writeNew(".env."+metadata.Slug(name), name, data, info.Mode().Perm(), false)
 }
 
-// Remove deletes the environment file and its sidecar entry.
+// Remove moves the environment file to trash and removes its sidecar entry.
 func (p *Project) Remove(selector string) (metadata.Environment, error) {
 	env, err := p.Find(selector)
 	if err != nil {
 		return metadata.Environment{}, err
 	}
-	if err := os.Remove(p.abs(env.File)); err != nil {
+	if _, err := store.Trash(p.Location, env.File); err != nil {
 		return metadata.Environment{}, err
 	}
 
@@ -483,6 +483,31 @@ func (p *Project) write(file, text string) error {
 		mode = info.Mode().Perm()
 	}
 	return fsx.WriteFileAtomic(full, []byte(text), mode)
+}
+
+// Restore moves an env file from trash back into the project.
+func (p *Project) Restore(file string) error {
+	if err := store.Restore(p.Location, file); err != nil {
+		return err
+	}
+	// Reconcile so the restored file appears.
+	reopened, err := Open(p.Location.Dir)
+	if err != nil {
+		return err
+	}
+	*p = *reopened
+	p.Location = reopened.Location
+	return p.save()
+}
+
+// ListTrash returns the relative paths of trashed env files.
+func (p *Project) ListTrash() ([]string, error) {
+	return store.ListTrash(p.Location)
+}
+
+// EmptyTrash permanently removes all trashed files.
+func (p *Project) EmptyTrash() (int, error) {
+	return store.EmptyTrash(p.Location)
 }
 
 func (p *Project) abs(file string) string {
