@@ -9,6 +9,7 @@ import { errorMessage, EnvStore } from './store'
 import { registerDebugProvider } from './debug'
 import { EnvNode, EnvTreeProvider, FolderNode, VariableNode } from './tree'
 import type { Environment } from './types'
+import { registerTerminalEnv } from './terminalEnv'
 
 interface FolderPick extends vscode.QuickPickItem {
   folderPath: string
@@ -181,6 +182,7 @@ export function activate (context: vscode.ExtensionContext): void {
     void vscode.window.showErrorMessage('Env Handler: the bundled envh binary is missing. Run npm run build.')
   }
   registerDebugProvider(context, envh, store)
+  registerTerminalEnv(context, binary, store)
   void store.refresh()
   void vscode.window.showInformationMessage('Env Handler activated')
 }

@@ -60,6 +60,11 @@
           "type": "string",
           "default": "",
           "description": "Default command for Run With Environment."
+        },
+        "envHandler.injectIntoTerminals": {
+          "type": "boolean",
+          "default": false,
+          "description": "Inject the active environment into integrated terminals and tasks. Restart running terminals after changing environments."
         }
       }
     },
