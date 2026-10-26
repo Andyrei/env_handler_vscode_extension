@@ -24,6 +24,7 @@ export function registerDebugProvider (
       folder: vscode.WorkspaceFolder | undefined,
       config: vscode.DebugConfiguration
     ): Promise<vscode.DebugConfiguration | undefined> {
+      void vscode.window.showInformationMessage('Env Handler debug provider called')
       const settings = vscode.workspace.getConfiguration('envHandler')
       if (!settings.get<boolean>('applyToDebug', false)) {
         return config
