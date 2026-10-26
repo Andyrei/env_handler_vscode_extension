@@ -35,6 +35,9 @@ export function registerDebugProvider (
         return config
       }
       const folderPath = folder.uri.fsPath
+      if (store.stateFor(folderPath)?.overview === undefined) {
+        await store.refresh()
+      }
       const active = store.activeEnvironment(folderPath)
       if (active === undefined) {
         void vscode.window.showWarningMessage('Env Handler: activate an environment to inject it into debug sessions.')
@@ -74,6 +77,7 @@ export function registerDebugProvider (
         Object.assign(injected, config.env as Record<string, string>)
       }
       config.env = injected
+      vscode.window.setStatusBarMessage(`Env Handler: injected ${Object.keys(values).length} values from ${active.name}`, 5000)
 
       // Some frameworks, including FastAPI/Pydantic, read a .env file directly.
       // Write the active values to a temporary file so those frameworks see them

@@ -182,6 +182,7 @@ export function activate (context: vscode.ExtensionContext): void {
   }
   registerDebugProvider(context, envh, store)
   void store.refresh()
+  vscode.window.setStatusBarMessage('Env Handler activated', 3000)
 }
 
 export function deactivate (): void {}
