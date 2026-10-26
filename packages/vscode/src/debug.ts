@@ -77,7 +77,7 @@ export function registerDebugProvider (
         Object.assign(injected, config.env as Record<string, string>)
       }
       config.env = injected
-      vscode.window.setStatusBarMessage(`Env Handler: injected ${Object.keys(values).length} values from ${active.name}`, 5000)
+      void vscode.window.showInformationMessage(`Env Handler: injected ${Object.keys(values).length} values from ${active.name}`)
 
       // Some frameworks, including FastAPI/Pydantic, read a .env file directly.
       // Write the active values to a temporary file so those frameworks see them
