@@ -38,11 +38,7 @@
     }
   },
   "activationEvents": [
-    "onView:envHandler.tree",
-    "onCommand:envHandler.openPanel",
-    "onDebug",
-    "onDebugResolve:debugpy",
-    "onStartupFinished"
+    "*"
   ],
   "contributes": {
     "configuration": {
