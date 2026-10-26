@@ -39,6 +39,8 @@ scripts           Build, package, install, and guard scripts
 - npm 9 or newer
 - VS Code 1.85 or newer for the extension
 
+VS Code extension builds are available for macOS (Intel and Apple Silicon), Linux (x64 and arm64), and Windows (x64 and arm64).
+
 ## Development
 
 ```sh

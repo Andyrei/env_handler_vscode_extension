@@ -52,8 +52,11 @@ confirmed.
 ## Requirements
 
 - VS Code 1.85 or newer.
-- A platform-specific `envh` binary is bundled in the VSIX. Install a build that
-  matches your OS and CPU (for example, macOS Apple Silicon).
+- A platform-specific `envh` binary is bundled in the VSIX. Install the build
+  for your OS and CPU:
+  - macOS: Intel (`darwin-x64`) or Apple Silicon (`darwin-arm64`)
+  - Linux: `linux-x64` or `linux-arm64`
+  - Windows: `win32-x64` or `win32-arm64`
 
 ## Getting started
 

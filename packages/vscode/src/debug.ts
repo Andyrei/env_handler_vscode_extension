@@ -34,6 +34,7 @@ export function registerDebugProvider (
       const folderPath = folder.uri.fsPath
       const active = store.activeEnvironment(folderPath)
       if (active === undefined) {
+        void vscode.window.showWarningMessage('Env Handler: activate an environment to inject it into debug sessions.')
         return config
       }
       const snapshot = store.stateFor(folderPath)?.overview?.branches.find(branch => branch.branch === active.branch)
@@ -59,7 +60,8 @@ export function registerDebugProvider (
       try {
         const result = await envh.resolve(folderPath, active.branch, active.file, true)
         values = result.values
-      } catch {
+      } catch (error) {
+        void vscode.window.showWarningMessage(`Env Handler could not resolve ${active.file}: ${errorMessage(error)}`)
         return config
       }
 
