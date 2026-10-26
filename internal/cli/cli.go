@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"env-handler/internal/envfile"
@@ -16,6 +17,8 @@ import (
 	"env-handler/internal/metadata"
 	"env-handler/internal/postman"
 	"env-handler/internal/project"
+	"env-handler/internal/runner"
+	"env-handler/internal/shell"
 	"env-handler/internal/store"
 	"env-handler/internal/swap"
 	"env-handler/internal/version"
@@ -37,6 +40,8 @@ type options struct {
 	skipDisabled  bool
 	skipEncrypted bool
 	restore       bool
+	noOverride    bool
+	format        string
 	env           string
 	help          bool
 	version       bool
@@ -60,6 +65,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	command, rest := opts.positional[0], opts.positional[1:]
 	var runErr error
+	exitCode := 0
 	switch command {
 	case "help":
 		fmt.Fprint(stdout, usage())
@@ -110,7 +116,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "value":
 		runErr = runValue(stdout, opts, rest)
 	case "resolve":
-		runErr = runResolve(stdout, opts, rest)
+		runErr = runResolve(stdout, stderr, opts, rest)
+	case "export":
+		runErr = runExport(stdout, stderr, opts, rest)
+	case "run":
+		exitCode, runErr = runRun(stdout, stderr, opts, rest)
 	case "set":
 		runErr = runSet(stdout, opts, rest)
 	case "unset":
@@ -121,7 +131,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if runErr != nil {
 		return fail(stderr, opts.json, runErr)
 	}
-	return 0
+	return exitCode
 }
 
 func parse(args []string) (options, error) {
@@ -156,12 +166,20 @@ func parse(args []string) (options, error) {
 			opts.restore = true
 		case "--skip-encrypted":
 			opts.skipEncrypted = true
+		case "--no-override":
+			opts.noOverride = true
 		case "--env":
 			if i+1 >= len(args) {
 				return opts, fmt.Errorf("%s requires a value", arg)
 			}
 			i++
 			opts.env = args[i]
+		case "--format":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.format = args[i]
 		case "--help", "-h":
 			opts.help = true
 		case "--version", "-v":
@@ -548,7 +566,7 @@ func runGitignore(stdout io.Writer, opts options, args []string) error {
 		if p.Resolved.Active != "" {
 			files = append(files, p.Resolved.Active)
 		}
-		for _, layer := range layers.Files(p.Location.ProjectPath, p.Resolved.Active) {
+		for _, layer := range layers.Files(p.Root, p.Resolved.Active) {
 			if layer != p.Resolved.Active {
 				files = append(files, layer)
 			}
@@ -884,58 +902,164 @@ func runImport(stdout io.Writer, opts options, args []string) error {
 	return nil
 }
 
-func runResolve(stdout io.Writer, opts options, args []string) error {
+func runResolve(stdout, stderr io.Writer, opts options, args []string) error {
 	envSelector := opts.env
 	if envSelector == "" && len(args) >= 2 && args[0] == "--env" {
 		envSelector = args[1]
 		args = args[2:]
 	}
-	if envSelector == "" {
-		p, err := openProject(opts)
-		if err != nil {
-			return err
-		}
-		if p.Resolved.Active == "" {
-			return usageErr("no active environment; pass --env <env>")
-		}
-		envSelector = p.Resolved.Active
+	if len(args) > 0 {
+		return usageErr("resolve takes no positional arguments")
 	}
 
 	p, err := openProject(opts)
 	if err != nil {
 		return err
 	}
+	if envSelector == "" {
+		if p.Resolved.Active == "" {
+			return usageErr("no active environment; pass --env <env>")
+		}
+		envSelector = p.Resolved.Active
+	}
 	env, err := p.Find(envSelector)
 	if err != nil {
 		return err
 	}
-
-	_, _, err = p.Entries(env.File)
+	merged, err := p.Merge(env.File, opts.skipEncrypted)
 	if err != nil {
 		return err
 	}
+	warnSkipped(stderr, merged.Skipped)
 
-	values := make(map[string]string)
-	// Load base layer first, then active.
-	for _, layer := range layers.Files(p.Location.ProjectPath, env.File) {
-		layerEntries, _, err := p.Entries(layer)
-		if err != nil {
-			continue
-		}
-		for _, e := range layerEntries {
-			if opts.skipEncrypted && e.Encrypted {
-				continue
-			}
-			values[e.Key] = e.Value
-		}
-	}
 	if opts.json {
-		return writeJSON(stdout, map[string]any{"environment": env.File, "layers": layers.Files(p.Location.ProjectPath, env.File), "values": values})
+		return writeJSON(stdout, jsonapi.Resolution{
+			Environment:      env.File,
+			Layers:           merged.Layers,
+			Values:           merged.Values,
+			Encrypted:        merged.Encrypted,
+			SkippedEncrypted: merged.Skipped,
+		})
 	}
-	for k, v := range values {
-		fmt.Fprintf(stdout, "%s=%s\n", k, v)
+	for _, key := range sortedKeys(merged.Values) {
+		fmt.Fprintf(stdout, "%s=%s\n", key, merged.Values[key])
 	}
 	return nil
+}
+
+func runExport(stdout, stderr io.Writer, opts options, args []string) error {
+	if len(args) > 0 {
+		return usageErr("export takes no positional arguments")
+	}
+	format := opts.format
+	if format == "" {
+		format = "shell"
+	}
+	if format != "shell" {
+		return usageErr("unknown export format; use shell")
+	}
+
+	p, err := openProject(opts)
+	if err != nil {
+		return err
+	}
+	selector := opts.env
+	if selector == "" {
+		if p.Resolved.Active == "" {
+			return usageErr("no active environment; pass --env <env>")
+		}
+		selector = p.Resolved.Active
+	}
+	env, err := p.Find(selector)
+	if err != nil {
+		return err
+	}
+	merged, err := p.Merge(env.File, opts.skipEncrypted)
+	if err != nil {
+		return err
+	}
+	warnEncrypted(stderr, merged.Encrypted)
+	warnSkipped(stderr, merged.Skipped)
+
+	if opts.json {
+		return writeJSON(stdout, jsonapi.Resolution{
+			Environment:      env.File,
+			Layers:           merged.Layers,
+			Values:           merged.Values,
+			Encrypted:        merged.Encrypted,
+			SkippedEncrypted: merged.Skipped,
+		})
+	}
+	for _, key := range sortedKeys(merged.Values) {
+		if !shell.ValidName(key) {
+			fmt.Fprintf(stderr, "warning: skipping %s: not a shell variable name\n", key)
+			continue
+		}
+		fmt.Fprintln(stdout, shell.Export(key, merged.Values[key]))
+	}
+	return nil
+}
+
+func runRun(stdout, stderr io.Writer, opts options, args []string) (int, error) {
+	if len(args) == 0 {
+		return 0, usageErr("run requires a command after --")
+	}
+
+	p, err := openProject(opts)
+	if err != nil {
+		return 0, err
+	}
+	selector := opts.env
+	if selector == "" {
+		if p.Resolved.Active == "" {
+			return 0, usageErr("no active environment; pass --env <env>")
+		}
+		selector = p.Resolved.Active
+	}
+	env, err := p.Find(selector)
+	if err != nil {
+		return 0, err
+	}
+	merged, err := p.Merge(env.File, false)
+	if err != nil {
+		return 0, err
+	}
+	warnEncrypted(stderr, merged.Encrypted)
+
+	dir, err := filepath.Abs(opts.cwd)
+	if err != nil {
+		return 0, err
+	}
+	return runner.Run(runner.Options{
+		Dir:        dir,
+		Args:       args,
+		Values:     merged.Values,
+		NoOverride: opts.noOverride,
+		Stdin:      os.Stdin,
+		Stdout:     stdout,
+		Stderr:     stderr,
+	})
+}
+
+func warnEncrypted(stderr io.Writer, keys []string) {
+	for _, key := range keys {
+		fmt.Fprintf(stderr, "warning: %s is encrypted; passing it through unchanged\n", key)
+	}
+}
+
+func warnSkipped(stderr io.Writer, keys []string) {
+	for _, key := range keys {
+		fmt.Fprintf(stderr, "warning: skipping encrypted %s\n", key)
+	}
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func runValue(stdout io.Writer, opts options, args []string) error {
@@ -1116,6 +1240,13 @@ Variables:
   value <env> <key> --reveal     Print a value
   set <env> <key> -- <value>     Set a value, adding the key when missing
   unset <env> <key>              Remove every occurrence of a key
+  resolve [--env <env>]          Print merged values (--skip-encrypted omits locks)
+  export [--env <env>]           Print shell exports for the active environment
+
+Run:
+  run [--env <env>] [--no-override] -- <command> [args...]
+                                 Run a command with the environment loaded
+                                 File values win unless --no-override is set
 
 Import:
   import postman <file> [--dry-run] [--force] [--skip-disabled]
@@ -1129,11 +1260,15 @@ Options:
   --force          Overwrite existing files during import
   --dry-run        Show what an import or purge would do without writing
   --skip-disabled  Leave out disabled Postman values
+  --skip-encrypted Omit encrypted values from resolve/export
+  --no-override    Let the parent process win over env file values
+  --format <fmt>   Export format (shell)
   --quiet, -q      Suppress confirmation text
   --help, -h       Show this help
   --version, -v    Show the version
 
 Put -- before values that start with a dash:
   envh set Local KEY -- -value
+  envh run -- npm start
 `, version.Version)
 }

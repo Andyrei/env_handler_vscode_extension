@@ -5,3 +5,13 @@ test/**
 tsconfig.json
 **/*.map
 **/.DS_Store
+vscode/**
+.git/**
+.gitignore
+node_modules/**
+src/**
+.eslintrc.json
+tsconfig.json
+**/*.map
+**/*.ts
+!dist/**

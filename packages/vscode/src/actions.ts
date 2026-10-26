@@ -198,9 +198,7 @@ export class EnvActions {
   // Enables swap mode: .env becomes a symlink/copy of the active env file.
   async swapActiveEnvironment (folderPath: string): Promise<void> {
     if (!this.canEdit()) return
-    const state = this.store.stateFor(folderPath)
-    const snapshot = state?.overview?.branches.find(b => b.branch === state.overview?.currentBranch)
-    const active = snapshot?.environments.find(e => e.active)
+    const active = this.store.activeEnvironment(folderPath)
     if (active === undefined) {
       await vscode.window.showWarningMessage('Activate an environment first.')
       return
@@ -212,7 +210,7 @@ export class EnvActions {
     )
     if (confirm !== 'Swap') return
     try {
-      await this.envh.runCommand(folderPath, undefined, ['swap', '--env', active.file])
+      await this.envh.runCommand(folderPath, active.branch, ['swap', '--env', active.file])
       await this.store.refresh()
       vscode.window.setStatusBarMessage(`Swapped .env → ${active.file}`, 4000)
     } catch (error) {
@@ -224,7 +222,8 @@ export class EnvActions {
   async restoreSwap (folderPath: string): Promise<void> {
     if (!this.canEdit()) return
     try {
-      await this.envh.runCommand(folderPath, undefined, ['swap', '--restore', '--force'])
+      const swapped = this.store.stateFor(folderPath)?.overview?.branches.find(branch => branch.swap !== undefined)
+      await this.envh.runCommand(folderPath, swapped?.branch, ['swap', '--restore', '--force'])
       await this.store.refresh()
       vscode.window.setStatusBarMessage('Restored .env from backup', 4000)
     } catch (error) {

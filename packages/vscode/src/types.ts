@@ -25,8 +25,15 @@ export interface Snapshot {
   branch: string
   branches: string[]
   active: string
+  swap?: SwapState
   environments: Environment[]
   warnings: string[]
+}
+
+export interface SwapState {
+  target: string
+  backup: string
+  mode: string
 }
 
 export interface Overview {

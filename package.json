@@ -1,6 +1,6 @@
 {
   "name": "env-handler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Standalone environment manager for .env files: Go core CLI and thin VS Code extension.",
   "license": "MIT",
@@ -19,7 +19,9 @@
     "lint:ts": "tsc -p packages/vscode/tsconfig.json --noEmit",
     "lint:scripts": "standard \"scripts/**/*.js\"",
     "build": "node scripts/build.js",
-    "package:vsix": "npm run build && node scripts/package.js",
+    "build:target": "node scripts/build.js --target",
+    "package:vsix": "node scripts/package.js",
+    "package:targets": "node scripts/package.js --all",
     "install:vsix": "node scripts/install.js",
     "check:no-dotenvx": "node scripts/check-no-dotenvx.js",
     "verify": "npm run lint && npm run check:no-dotenvx && npm test && npm run build"

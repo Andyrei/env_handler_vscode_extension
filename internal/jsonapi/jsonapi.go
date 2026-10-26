@@ -96,6 +96,16 @@ type Value struct {
 	Value string `json:"value"`
 }
 
+// Resolution is the layered value set returned by resolve and export --json.
+// Encrypted keys are included in Values unless skip-encrypted was used.
+type Resolution struct {
+	Environment      string            `json:"environment"`
+	Layers           []string          `json:"layers"`
+	Values           map[string]string `json:"values"`
+	Encrypted        []string          `json:"encrypted"`
+	SkippedEncrypted []string          `json:"skippedEncrypted"`
+}
+
 // Error is written to stderr as JSON when a command fails with --json.
 type Error struct {
 	Ok      bool   `json:"ok"`

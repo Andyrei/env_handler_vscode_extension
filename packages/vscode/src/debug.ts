@@ -32,13 +32,12 @@ export function registerDebugProvider (
         return config
       }
       const folderPath = folder.uri.fsPath
-      const state = store.stateFor(folderPath)
-      const snapshot = state?.overview?.branches.find(b => b.branch === state.overview?.currentBranch)
-      if (snapshot === undefined || snapshot.environments.length === 0) {
+      const active = store.activeEnvironment(folderPath)
+      if (active === undefined) {
         return config
       }
-      const active = snapshot.environments.find(e => e.active)
-      if (active === undefined) {
+      const snapshot = store.stateFor(folderPath)?.overview?.branches.find(branch => branch.branch === active.branch)
+      if (snapshot === undefined) {
         return config
       }
 
@@ -58,7 +57,7 @@ export function registerDebugProvider (
 
       let values: Record<string, string>
       try {
-        const result = await envh.resolve(folderPath, active.file, true)
+        const result = await envh.resolve(folderPath, active.branch, active.file, true)
         values = result.values
       } catch {
         return config
@@ -85,6 +84,6 @@ export function registerDebugProvider (
 // resolve is called on the CLI wrapper. Add it to cli.ts.
 declare module './cli' {
   interface Envh {
-    resolve (cwd: string, env: string, skipEncrypted: boolean): Promise<{ values: Record<string, string> }>
+    resolve (cwd: string, branch: string | undefined, env: string, skipEncrypted: boolean): Promise<{ values: Record<string, string> }>
   }
 }

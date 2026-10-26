@@ -2,10 +2,18 @@
   "name": "env-handler-vscode",
   "displayName": "Env Handler",
   "description": "Manage named .env environments from VS Code.",
-  "version": "0.1.0",
-  "publisher": "env-handler",
+  "version": "0.1.1",
+  "publisher": "AndyDrei",
   "icon": "media/logo-env-handler.png",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Andyrei/env_handler_vscode_extension.git"
+  },
+  "homepage": "https://github.com/Andyrei/env_handler_vscode_extension#readme",
+  "bugs": {
+    "url": "https://github.com/Andyrei/env_handler_vscode_extension/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

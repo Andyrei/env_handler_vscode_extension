@@ -3,14 +3,20 @@
 const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
+const { currentTarget } = require('./targets')
 
 const root = path.resolve(__dirname, '..')
 const version = require(path.join(root, 'package.json')).version
-const vsix = path.join(root, 'dist', `env-handler-vscode-${version}.vsix`)
+const target = currentTarget()
+const candidates = [
+  path.join(root, 'dist', `env-handler-vscode-${version}-${target}.vsix`),
+  path.join(root, 'dist', `env-handler-vscode-${version}.vsix`)
+]
+const vsix = candidates.find(file => fs.existsSync(file))
 const code = process.platform === 'win32' ? 'code.cmd' : 'code'
 
-if (!fs.existsSync(vsix)) {
-  console.error(`envh: ${path.relative(root, vsix)} does not exist.`)
+if (vsix === undefined) {
+  console.error(`envh: no VSIX for ${target} was found in dist/.`)
   console.error('Run npm run package:vsix first.')
   process.exit(1)
 }

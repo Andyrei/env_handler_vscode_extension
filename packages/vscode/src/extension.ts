@@ -154,13 +154,11 @@ export function activate (context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('envHandler.runWithEnvironment', async (arg?: unknown) => {
       const folderPath = await resolveFolder(arg)
       if (folderPath === undefined) return
-      const state = store.stateFor(folderPath)
-      const snapshot = state?.overview?.branches.find(b => b.branch === state.overview?.currentBranch)
-      if (snapshot === undefined || snapshot.environments.length === 0) {
-        await vscode.window.showInformationMessage('No environments yet. Create one first.')
+      const active = store.activeEnvironment(folderPath)
+      if (active === undefined) {
+        await vscode.window.showInformationMessage('Activate an environment first.')
         return
       }
-      const active = snapshot.environments.find(e => e.active) ?? snapshot.environments[0]
       const command = await vscode.window.showInputBox({
         prompt: `Command to run with ${active.name} (${active.branch})`,
         value: vscode.workspace.getConfiguration('envHandler').get<string>('runCommand', ''),
@@ -171,12 +169,10 @@ export function activate (context: vscode.ExtensionContext): void {
 
       const terminal = vscode.window.createTerminal({
         name: `Env Handler: ${active.name}`,
-        cwd: folderPath,
-        env: {}
+        cwd: folderPath
       })
-      const root = store.rootFor(folderPath, active.branch)
       const binary = binaryPath(context.extensionPath)
-      terminal.sendText(`${JSON.stringify(binary)} run --cwd ${JSON.stringify(folderPath)} --env ${JSON.stringify(active.file)} -- ${command}`)
+      terminal.sendText(runLine(binary, folderPath, active.branch, active.file, command))
       terminal.show()
     })
   )
@@ -264,6 +260,18 @@ async function resolveFolder (arg: unknown): Promise<string | undefined> {
     { placeHolder: 'Choose a workspace folder' }
   )
   return picked?.folderPath
+}
+
+function runLine (binary: string, folderPath: string, branch: string, file: string, command: string): string {
+  const windows = process.platform === 'win32'
+  const powershell = windows && /(?:powershell|pwsh)(?:\.exe)?$/i.test(vscode.env.shell)
+  const quote = powershell
+    ? (value: string): string => `'${value.replace(/'/g, "''")}'`
+    : windows
+      ? (value: string): string => `"${value.replace(/"/g, '""')}"`
+      : (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
+  const prefix = powershell ? '& ' : ''
+  return `${prefix}${quote(binary)} run --cwd ${quote(folderPath)} --branch ${quote(branch)} --env ${quote(file)} -- ${command}`
 }
 
 function showVersion (context: vscode.ExtensionContext): void {

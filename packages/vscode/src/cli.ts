@@ -75,10 +75,10 @@ export class Envh {
     return this.run<ValuePayload>(scope.cwd, scope.branch, ['value', env, key, '--reveal'])
   }
 
-  resolve (cwd: string, env: string, skipEncrypted: boolean): Promise<{ values: Record<string, string> }> {
+  resolve (cwd: string, branch: string | undefined, env: string, skipEncrypted: boolean): Promise<{ values: Record<string, string> }> {
     const args = ['resolve', '--env', env]
     if (skipEncrypted) args.push('--skip-encrypted')
-    return this.run<{ values: Record<string, string> }>(cwd, undefined, args)
+    return this.run<{ values: Record<string, string> }>(cwd, branch, args)
   }
 
   // Storage commands always act on the current branch.

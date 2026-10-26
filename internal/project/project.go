@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"env-handler/internal/discovery"
@@ -348,6 +349,66 @@ func (p *Project) Snapshot() (jsonapi.Snapshot, error) {
 		}
 	}
 	return snap, nil
+}
+
+// MergeResult is the layered value set for one environment.
+type MergeResult struct {
+	Values    map[string]string
+	Layers    []string
+	Encrypted []string
+	Skipped   []string
+}
+
+// Merge resolves values from the base layer and the selected environment.
+// Skipped lists encrypted keys that were omitted because skipEncrypted was set.
+// Values never include an entry that was skipped; a later plaintext assignment
+// in another layer still wins, matching normal layering.
+func (p *Project) Merge(selector string, skipEncrypted bool) (MergeResult, error) {
+	env, err := p.Find(selector)
+	if err != nil {
+		return MergeResult{}, err
+	}
+
+	type state struct {
+		value     string
+		encrypted bool
+		skipped   bool
+	}
+	final := make(map[string]state)
+	files := layers.Files(p.Root, env.File)
+	for _, file := range files {
+		entries, _, err := p.Entries(file)
+		if err != nil {
+			return MergeResult{}, err
+		}
+		for _, entry := range entries {
+			if skipEncrypted && entry.Encrypted {
+				if _, ok := final[entry.Key]; !ok {
+					final[entry.Key] = state{skipped: true}
+				}
+				continue
+			}
+			final[entry.Key] = state{value: entry.Value, encrypted: entry.Encrypted}
+		}
+	}
+
+	result := MergeResult{
+		Values: make(map[string]string),
+		Layers: files,
+	}
+	for key, item := range final {
+		if item.skipped {
+			result.Skipped = append(result.Skipped, key)
+			continue
+		}
+		result.Values[key] = item.value
+		if item.encrypted {
+			result.Encrypted = append(result.Encrypted, key)
+		}
+	}
+	sort.Strings(result.Encrypted)
+	sort.Strings(result.Skipped)
+	return result, nil
 }
 
 // Value returns the first entry for key. The caller decides whether to print it.
