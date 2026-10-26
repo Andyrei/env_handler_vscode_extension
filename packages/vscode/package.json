@@ -47,7 +47,7 @@
       "properties": {
         "envHandler.applyToDebug": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Inject the active environment into debug sessions."
         },
         "envHandler.debugTypes": {

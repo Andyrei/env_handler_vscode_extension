@@ -1,3 +1,6 @@
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import * as vscode from 'vscode'
 import type { Envh } from './cli'
 import type { EnvStore } from './store'
@@ -71,6 +74,14 @@ export function registerDebugProvider (
         Object.assign(injected, config.env as Record<string, string>)
       }
       config.env = injected
+
+      // Some frameworks, including FastAPI/Pydantic, read a .env file directly.
+      // Write the active values to a temporary file so those frameworks see them
+      // even when the project itself has no .env.
+      const tempEnvFile = path.join(os.tmpdir(), 'env-handler-debug.env')
+      const lines = Object.entries(values).map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+      fs.writeFileSync(tempEnvFile, `${lines.join('\n')}\n`, { mode: 0o600 })
+      config.envFile = tempEnvFile
       return config
     }
   }
